@@ -34,7 +34,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OVMF_CODE = os.environ.get("OVMF_CODE", "/usr/share/OVMF/OVMF_CODE_4M.fd")
 OVMF_VARS = os.environ.get("OVMF_VARS", "/usr/share/OVMF/OVMF_VARS_4M.fd")
 W, H = 1280, 800
-ALL = ["desktop", "call", "film", "print", "office", "pdfform"]    # apps is a separate, long run
+ALL = ["desktop", "call", "film", "print", "office", "pdfform", "types"]    # apps is a separate, long run
 
 QCODE = {}
 for c in "abcdefghijklmnopqrstuvwxyz0123456789":
@@ -408,15 +408,21 @@ def welcome(q, shots):
 # ── the run ─────────────────────────────────────────────────────────
 
 def read_known_gaps():
-    gaps = {}
+    """(gaps, pending). A name starting with ~ is pending: it is a gap while the image under test is older than the
+    change that fixes it, so it may fail (GAP) or pass (pass) without failing the run. Delete the line once a build
+    carrying the change has been tested; from then on a failure is a failure."""
+    gaps, pending = {}, set()
     p = os.path.join(HERE, "known-gaps.txt")
     if os.path.exists(p):
         for ln in open(p):
             ln = ln.split("#", 1)[0].strip()
             if ln:
                 name, _, why = ln.partition(" ")
+                if name.startswith("~"):
+                    name = name[1:]
+                    pending.add(name)
                 gaps[name] = why.strip()
-    return gaps
+    return gaps, pending
 
 
 def parse_line(line):
@@ -596,7 +602,7 @@ def main():
         if not a.work:
             shutil.rmtree(work, ignore_errors=True)
 
-    gaps = read_known_gaps()
+    gaps, pending = read_known_gaps()
     rows, bad = [], 0
     agg = a.checks + [x for x in ("desktop", "firefox") if x not in a.checks and any(k.startswith(x + ".") for k in results)]
     for c in agg:
@@ -608,7 +614,9 @@ def main():
         live = []
         for k in parts:
             if k != c and k in gaps:
-                if results[k]["status"] == "pass":
+                if results[k]["status"] == "pass" and k in pending:
+                    sub_rows.append(("  " + k, "pass", results[k]["detail"], ""))
+                elif results[k]["status"] == "pass":
                     sub_rows.append(("  " + k, "PASS-REMOVE-GAP", results[k]["detail"], gaps[k]))
                     sub_bad += 1
                 else:
@@ -629,7 +637,9 @@ def main():
             shown = "red-ok" if st != "pass" else "NOT-RED"
             bad += st == "pass"
         elif c in gaps:
-            if st == "pass":
+            if st == "pass" and c in pending:
+                shown = "pass"
+            elif st == "pass":
                 shown, bad = "PASS-REMOVE-GAP", bad + 1
             else:
                 shown = "GAP"

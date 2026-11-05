@@ -126,6 +126,11 @@ keyboard_variant=""
 #   she is left to find Printers and add it by hand.
 # dmsetup: the udev rules that let an encrypted USB stick unlock; without
 #   them the unlock waits forever on a notice that never comes.
+# printer-driver-escpr, printer-driver-brlaser: the two brands whose drivers
+#   were not here. A printer made since about 2015 needs none (driverless,
+#   above); an Epson inkjet or a Brother laser from before that does, and
+#   without one it is "found" and prints nothing. 0.6 MB together. HP
+#   (hpcups) and Canon/Epson photo printers (gutenprint) were already here.
 packages_hardware="linux-firmware-minimal linux-image-generic
                    linux-firmware-amd-graphics linux-firmware-amd-misc
                    linux-firmware-intel-graphics linux-firmware-intel-misc
@@ -143,6 +148,7 @@ packages_hardware="linux-firmware-minimal linux-image-generic
                    cups cups-filters avahi-daemon avahi-utils libnss-mdns
                    ipp-usb
                    printer-driver-gutenprint printer-driver-hpcups
+                   printer-driver-escpr printer-driver-brlaser
                    cups-pk-helper system-config-printer
                    system-config-printer-udev dmsetup
                    pciutils usbutils"
@@ -376,6 +382,11 @@ browser_fallback="epiphany-browser"
 #   libglib2.0-bin   `gio`, which our xdg-open hands every "open this" to (so
 #              a program's request goes where a double-click would; named
 #              here so that it is installed on purpose, not by luck).
+#   aisleriot  Solitaire. The first thing a person who has used Windows since
+#              1998 looks for, and the store's copy (83 MB, from Flathub) needs
+#              her to find the store, search, and wait. 73 MB installed here,
+#              53 of them the Scheme the games are written in; build/forge
+#              names it Solitaire (its launcher is `sol`).
 packages_files="thunar thunar-volman gvfs gvfs-backends udisks2
                 ristretto evince mousepad xarchiver mpv mate-calc
                 libreoffice-writer libreoffice-calc libreoffice-gtk3
@@ -383,7 +394,7 @@ packages_files="thunar thunar-volman gvfs gvfs-backends udisks2
                 heif-gdk-pixbuf libheif-plugin-libde265 libglib2.0-bin
                 tumbler unzip zip eject webp-pixbuf-loader libreoffice-math
                 hunspell-en-us hyphen-en-us mythes-en-us libmtp-runtime
-                shared-mime-info desktop-file-utils xdg-user-dirs"
+                shared-mime-info desktop-file-utils xdg-user-dirs aisleriot"
 
 # The browse-and-install store. Heavier than everything above put
 # together -- 35 packages and a background service -- so it is a knob

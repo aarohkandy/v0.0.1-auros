@@ -1,5 +1,20 @@
 # A check or sub-check that fails TODAY for a named reason (tools/parity/README.md). Format: NAME  reason.
 # A gap that fails is shown as GAP and does not fail the run; a gap that PASSES fails the run until its line is deleted.
-office.types  xdg-open cannot type any local file on this desktop (unknown desktop name, no 'file' package): programs that call it open her documents in the web browser; gio open and the file manager are fine. Fix: install file, or ship an xdg-open that calls gio open (stream C).
-pdfform.last-box  Evince keeps a form box only once she leaves it: saving straight after typing loses the last box (the viewer decision is WP-56).
-firefox.firstrun  Firefox 158 asks her to accept its Terms of Use on first run and says it sends diagnostic data to Mozilla, although the policy sets DisableTelemetry and SkipOnboarding (S2 owns the policy).
+# Nothing is listed today. (office.types, pdfform.last-box and firefox.firstrun were here until 2026-11-04: all three had
+# shown PASS-REMOVE-GAP in every nightly since 2026-10-25, which is a failed run, every night. docs/results/everyday.md)
+#
+# Pending (~NAME): fails while the image under test is older than the change that fixes it, so the nightly (which tests the
+# newest EXISTING build) stays green until the build carrying that change has been made. May fail (GAP) or pass without
+# failing the run. After the first nightly on a build that has the change, delete these lines: from then on a failure is red.
+~print.drivers  needs printer-driver-escpr and printer-driver-brlaser (profiles/desktop.profile): in no image built before wave/gm-everyday
+~types.solitaire  needs aisleriot and the sol|Solitaire row of build/forge: in no image built before wave/gm-everyday
+~types.music  needs the second update-desktop-database of build/forge (the renamed copies in /usr/local): .wmv, .wma, .aac, .flv answer nothing without it
+~types.web  needs the same index: x-scheme-handler/mailto answers nothing without it
+~types.pictures  new check, never yet run on an image
+~types.pdf  new check, never yet run on an image
+~types.letters  new check, never yet run on an image
+~types.tables  new check, never yet run on an image
+~types.notes  new check, never yet run on an image
+~types.zip  new check, never yet run on an image
+~types.installer  new check, never yet run on an image
+~types.folders  new check, never yet run on an image

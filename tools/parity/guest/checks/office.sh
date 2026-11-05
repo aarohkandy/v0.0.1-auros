@@ -7,13 +7,19 @@ DOCX=application/vnd.openxmlformats-officedocument.wordprocessingml.document
 XLSX=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 [ -s /var/lib/auros-parity/apt-size.log ] && note "size of what was installed for this run: $(tr '\n' ' ' < /var/lib/auros-parity/apt-size.log)"
 
-# 1. a program that asks "what is this file?" (xdg-open does, for every program that opens a file for her)
-gd=$(xdg-mime query filetype "$D/letter.docx"); gx=$(xdg-mime query filetype "$D/budget.xlsx")
-gp=$(python3 "$P/mkpdf.py" plain "$D/x.pdf" hi; xdg-mime query filetype "$D/x.pdf")
-if [ "$gd" = "$DOCX" ] && [ "$gx" = "$XLSX" ] && [ "$gp" = application/pdf ]; then
-    result office.types pass "xdg-open can tell a Word, an Excel and a PDF file apart"
+# 1. a program that asks "what is this file?" (xdg-open does, for every program that opens a file for her).
+#    Ours hands the file to `gio open` (build/forge stage_xdg_open), which asks GLib's own database. The
+#    original asks `xdg-mime`, which is empty on this desktop (no `file` program) and so sends her letter,
+#    PDF or photo to the web browser. So: is it ours, and does that database know all three?
+ctype() { gio info -a standard::content-type "$1" 2>/dev/null | sed -n 's/^ *standard::content-type: //p'; }
+gd=$(ctype "$D/letter.docx"); gx=$(ctype "$D/budget.xlsx")
+gp=$(python3 "$P/mkpdf.py" plain "$D/x.pdf" hi; ctype "$D/x.pdf")
+if ! grep -q 'xdg-open.distrib' "$(command -v xdg-open)" 2>/dev/null; then    # ours names the original it keeps beside it
+    result office.types fail "xdg-open is xdg-utils' own: it asks xdg-mime, which is empty here, so a program that opens her letter, PDF or photo gets the web browser (build/forge stage_xdg_open did not run)"
+elif [ "$gd" = "$DOCX" ] && [ "$gx" = "$XLSX" ] && [ "$gp" = application/pdf ]; then
+    result office.types pass "xdg-open hands files to gio, which tells a Word, an Excel and a PDF file apart"
 else
-    result office.types fail "xdg-mime query filetype says docx='$gd' xlsx='$gx' pdf='$gp' (empty: xdg-open cannot choose a program and falls back to the web browser). Cause: this desktop is not one xdg-open knows, and the 'file' package it falls back to is not installed; 'gio open' works"
+    result office.types fail "gio says docx='$gd' xlsx='$gx' pdf='$gp' (empty or wrong: xdg-open cannot choose a program)"
 fi
 
 # 2. something is registered to open them (what the file manager does on a double-click)

@@ -10,7 +10,7 @@ call browser (Flathub Chromium, WP-22) and note whether that fixes it.
 | # | Site | Try | Why it might break here |
 |---|---|---|---|
 | 1 | google.com | search; click a result; open the "Images" tab | none expected |
-| 2 | Gmail | sign in, read a message, send one to yourself, open an attachment | 2-step sign-in prompts; PDF/Office attachments open the wrong program (see office.types) |
+| 2 | Gmail | sign in, read a message, send one to yourself, open an attachment | 2-step sign-in prompts; PDF/Office attachments: Letters and Spreadsheets open them (parity `office`, `types`); not tried from a mail site |
 | 3 | Outlook.com / Hotmail | sign in, read, reply | the same |
 | 4 | Yahoo Mail | sign in, read | many ads; pop-up blocker must not hide the sign-in |
 | 5 | Facebook | sign in, scroll 20 posts, play a video with sound, post a photo from the Pictures folder | video autoplay with sound is blocked by policy until she presses play; file picker through the portal |

@@ -8,9 +8,10 @@ State, findings and next steps: `docs/handoff/streams/PARITY.md`. Results: `docs
 | `desktop` | desktop, network and sound come up |
 | `call` | a real V4L2 camera (kernel `vivid`) and a PipeWire microphone (a tone) go through WebRTC in Firefox; the far side gets video and sound; the window shows the page (`call.visible`) |
 | `film` | an H.264/AAC MP4 and a DASH stream (Media Source, separate audio and video) play with sound; the window shows the picture |
-| `print` | a printer on "another machine" (a network namespace, ippeveprinter + mDNS) is found over DNS-SD, added driverless, a job arrives as a PDF |
-| `office` | xdg-open can type a docx/xlsx/pdf; something sensible opens them; Writer and Calc open and save them |
+| `print` | a printer on "another machine" (a network namespace, ippeveprinter + mDNS) is found over DNS-SD, added driverless, a job arrives as a PDF; and CUPS has drivers for the older printers of HP, Canon, Epson and Brother (`print.drivers`) |
+| `office` | xdg-open is ours and GLib's database types a docx/xlsx/pdf; something sensible opens them; Writer and Calc open and save them |
 | `pdfform` | double-click a form, click boxes, type, Save a copy: both boxes are in the file |
+| `types` | what a double-click opens, asked of the desktop's own file database (no window): pictures, PDF, letters, tables, notes, music and video (Windows Media too), zip, installers and presentations, folders, web links and `mailto:`, each by the name her screen shows; and Solitaire is among her programs |
 | `apps` | the top ten Flathub programs install with no password, get a launcher, open a window (separate, long run) |
 
 ## Run it
@@ -41,6 +42,10 @@ checks run as the desktop's own user with the environment the shell publishes. T
 
 `known-gaps.txt`: a check that fails today for a named reason is shown as `GAP` and does not fail the job; a gap that
 starts passing FAILS the job until its line is deleted. So a fix cannot go unnoticed and a gap cannot hide a regression.
+A name written `~NAME` is pending: the nightly tests the newest EXISTING build, so a check added together with the change
+it proves fails there until a build carries the change. A pending check may fail (GAP) or pass without failing the job;
+delete the line after the first night on a build that has the change. `python3 -I tools/parity/selftest.py` replays
+healthy and old-image nights against the file.
 
 Red proofs: `--without PKG` removes a package before the desktop starts (in the overlay) and `--expect-fail CHECKS` makes
 the run demand that those checks fail. Used: `--without firefox` (call, film), `--without evince` (pdfform),
