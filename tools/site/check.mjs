@@ -239,6 +239,13 @@ async function visit({ name, url = HOME, ua, uad, viewport = { width: 1366, heig
   return { ctx, page };
 }
 
+// What GitHub would answer, without the network: the release API the press asks (status 200 or 404, after ms),
+// and the download address itself, which answers a file.
+async function githubSays(page, status, ms = 0) {
+  await page.route("https://api.github.com/**", async (route) => { if (ms) await new Promise((r) => setTimeout(r, ms)); return route.fulfill({ status, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: status === 404 ? '{"message":"Not Found"}' : "{}" }); });
+  await page.route("https://github.com/**", (route) => route.fulfill({ status: 200, headers: { "content-type": "application/octet-stream", "content-disposition": "attachment; filename=AurOS-Setup.exe" }, body: "x" }));
+}
+
 function textFindings(name, items) {
   const small = items.filter((i) => i.size < 18);
   const low = items.filter((i) => i.contrast !== null && i.contrast < 4.5);
@@ -1140,16 +1147,17 @@ for (const [at, want] of [
     // A-05: after the press she is shown where she is: step 1, "your browser is asking"; the download still goes ahead.
     for (const sel of ["#get", ".bar .pill"]) {
       const { ctx, page } = await visit({ name: "A-05 " + sel, ua: UA.winEdge, uad: UAD.winX64, viewport: { width: 1366, height: 768 } });
-      await page.evaluate(() => { window.__prevented = null; window.addEventListener("click", (e) => { window.__prevented = e.defaultPrevented; e.preventDefault(); }); });
+      await githubSays(page, 200);
+      const gotFile = page.waitForEvent("download", { timeout: 8000 }).then(() => true, () => false);
       const before = await page.evaluate(() => { const e = document.getElementById("here"); return e ? e.innerText.trim() : "missing"; });
       await page.click(sel);
       await page.waitForTimeout(900);
       for (let i = 0, last = -1; i < 40; i++) { const y = await page.evaluate(() => scrollY); if (y === last) break; last = y; await page.waitForTimeout(250); } // the smooth scroll has come to rest
-      const after = await page.evaluate(() => { const h = document.getElementById("here"); const st = document.getElementById("step-download").getBoundingClientRect(); return { shown: !!h && h.getClientRects().length > 0, text: h ? h.innerText : "", live: h ? (h.getAttribute("role") || h.getAttribute("aria-live")) : null, top: st.top, y: scrollY, prevented: window.__prevented }; });
+      const after = await page.evaluate(() => { const h = document.getElementById("here"); const st = document.getElementById("step-download").getBoundingClientRect(); return { shown: !!h && h.getClientRects().length > 0, text: h ? h.innerText : "", live: h ? (h.getAttribute("role") || h.getAttribute("aria-live")) : null, top: st.top, y: scrollY }; });
       check(before === "", `A-05 ${sel}: before the press nothing says "you are here"`, JSON.stringify(before));
       check(after.shown && /you are here/i.test(after.text) && /asking if you trust the file/i.test(after.text) && after.live, `A-05 ${sel}: after the press, "You are here: your browser is asking if you trust the file", announced`, JSON.stringify(after));
       check(after.y > 300 && after.top >= 0 && after.top < 300, `A-05 ${sel}: and step 1 is brought into view`, `step 1 at ${Math.round(after.top)}, scrolled ${Math.round(after.y)}`);
-      check(after.prevented === false, `A-05 ${sel}: the page does not stop the download`, String(after.prevented));
+      check(await gotFile, `A-05 ${sel}: the page does not stop the download (GitHub says a release is there, so the file comes)`);
       if (sel === "#get") await shot(page, "index-after-press.png");
       await ctx.close();
     }
@@ -1170,6 +1178,93 @@ for (const [at, want] of [
       check(t.sac && t.sac.link && /windows setting/i.test(t.sac.text) && /nothing was changed/i.test(t.sac.text) && !/can.t go on this computer/i.test(t.sac.text), "B-06: Smart App Control is a Windows setting a helper can change, not \"AurOS can't go on\"; nothing was changed; with the way to the helper's page", t.sac ? JSON.stringify(t.sac.text) : "no #smart-app-control");
       check(!/^No\./.test(t.files) && /made to keep/i.test(t.files) && /memory stick/i.test(t.files), "A-09: \"Will I lose my files?\" does not say an absolute No beside advice to copy photos: it says made to keep, and copy what you treasure first", JSON.stringify(t.files));
       await ctx.close();
+    }
+    // gm-site: the front page says what real Edge shows (docs/handoff e2e shots 0012-0015: a trash can and a small
+    // three-dot button; its menu is Delete, Keep; then a box whose black button is DELETE, with Keep anyway behind the
+    // small arrow beside it), where Run anyway hides, what to do if she pressed Delete, who and what it costs, the
+    // promise in the strip is solid ink, and an old Windows is not told that Setup checks it.
+    {
+      const { ctx, page } = await visit({ name: "gm-site front page", ua: UA.winEdge, uad: UAD.winX64 });
+      const f = await page.evaluate(() => {
+        const step = (n) => { const e = document.querySelectorAll(".steps3 > li")[n]; return e ? e.innerText.replace(/\s+/g, " ") : ""; };
+        const rev = document.querySelector(".strip-row.rev span");
+        const cs = rev ? getComputedStyle(rev) : null;
+        const ink = cs ? cs.color.match(/[\d.]+/g).map(Number) : [0, 0, 0, 0];
+        const safe = document.getElementById("safe"), strip = document.querySelector(".strip");
+        return { one: step(0), two: step(1), safe: safe ? safe.innerText.replace(/\s+/g, " ") : "", safeAbove: !!(safe && strip && (safe.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING)),
+          stroke: cs ? cs.webkitTextStrokeWidth : null, alpha: ink.length > 3 ? ink[3] : 1, dark: Math.max(ink[0], ink[1], ink[2]),
+          pic: [...document.querySelectorAll("#step-download .s3-pic .hit")].map((e) => e.innerText.trim()),
+          rings: [...document.querySelectorAll(".steps3 > li")].map((li) => [...li.querySelectorAll(".s3-pic .hit")].map((e) => e.dataset.n || "-").join(",")),
+          safeTitle: (document.getElementById("safe-title") || {}).innerText || "",
+          uac: (() => { const y = document.querySelector(".steps3 .s3-uac .ua-btn:not(.ua-no)"), n = document.querySelector(".steps3 .s3-uac .ua-no"); return y && n ? { yes: y.innerText, no: n.innerText, yesLeft: y.getBoundingClientRect().left < n.getBoundingClientRect().left, yesRing: y.classList.contains("hit"), yesBg: getComputedStyle(y).backgroundColor, noBg: getComputedStyle(n).backgroundColor } : null; })(),
+          page: document.body.innerText.replace(/\s+/g, " ") };
+      });
+      check(!/Press Keep, then Keep anyway\./.test(f.one) && f.pic.length === 4, "gm-site: step 1 does not draw one big Keep button (Edge shows a trash can and three dots, then Delete with a small arrow)", JSON.stringify(f.pic));
+      check(f.pic.join("|") === "\u2026|Keep||Keep anyway", "gm-site: step 1's picture rings the three dots, Keep, the small arrow and Keep anyway, as real Edge", JSON.stringify(f.pic));
+      check(/three dots/i.test(f.one) && /small arrow beside Delete/i.test(f.one) && /Keep anyway/.test(f.one) && /Do not press Delete\./.test(f.one) && /press Get AurOS again/.test(f.one), "gm-site: step 1 names the three dots, the small arrow beside Delete, Keep anyway, and says not to press Delete, and what to do if she did", f.one);
+      check(/Delete/.test(f.one) && /Cancel/.test(f.one), "gm-site: step 1's picture shows the black Delete beside Cancel, so she knows the box when she meets it", f.one);
+      check(/More info[^.]*Run anyway/.test(f.two) && /Yes, the white button/.test(f.two) && /may first show a blue box/.test(f.two), "gm-site: step 2 says Windows may first show the blue box (More info, then Run anyway), and Yes is the white button", f.two);
+      // The real run (shots 0018, 0019): Open file went straight to the yes/no box; no blue box came. So the picture is the box that always comes.
+      check(f.uac && f.uac.yes === "Yes" && f.uac.no === "No" && f.uac.yesLeft && f.uac.yesRing && f.uac.yesBg === "rgb(255, 255, 255)" && f.uac.noBg === "rgb(0, 103, 192)" && /unknown publisher/.test(f.two), "gm-site: step 2's picture is the yes/no box that always comes (white Yes on the left, ringed; blue No), not the blue box that may not", JSON.stringify(f.uac));
+      check(f.rings[0] === "1,2,3,4" && f.rings[1] === "-" && f.rings[2] === "-", "gm-site: numbered circles only where there is an order (step 1: 1 to 4); steps 2 and 3 show one ring and no second \"1\" beside the big step number", JSON.stringify(f.rings));
+      check(!/Is this safe/.test(f.safeTitle) && /Is this safe\?/.test(f.safe), "gm-site: the section's heading does not say the three questions again above their own headings", f.safeTitle);
+      check(f.safeAbove && /Is this safe\?/.test(f.safe) && /Who made it\?/.test(f.safe) && /What does it cost\?/.test(f.safe) && /one person/i.test(f.safe) && /Nothing\./.test(f.safe) && /may warn/i.test(f.safe) && !/will warn/i.test(f.safe), "gm-site: before the steps, in plain words, Is this safe, Who made it, What does it cost (and why Edge and Windows may warn: the real run showed no SmartScreen box)", f.safe);
+      check(f.stroke === "0px" && f.alpha > 0.9 && f.dark < 60, "gm-site: the second row in the strip (Never phones you...) is solid ink, not an outline", `stroke ${f.stroke}, alpha ${f.alpha}, darkest channel ${f.dark}`);
+      check(/at least \d+ GB of empty room on your Windows drive/.test(f.page), "gm-site: the front page says how much empty room AurOS needs (a data-fact the promises check ties to preflight.h)", "");
+      check(/Smart App Control/.test(f.page) && /antivirus/i.test(f.page) && /404/.test(f.page) && /Not found/.test(f.page) && /try again later/.test(f.page) && !/in an hour/.test(f.page), "gm-site: the front page says what to do if Windows or an antivirus stops the file, and if the download link says 404 (try again later, no promised hour)", "");
+      check(await page.evaluate(() => { const l = [...document.querySelectorAll("#blocked a")].map((a) => a.getAttribute("href")); return l.includes("install.html#antivirus") && l.includes("install.html#smart-app-control"); }), "gm-site: Smart App Control and an antivirus each link to their own words on install.html");
+      await ctx.close();
+      const old = await visit({ name: "gm-site Windows 7", ua: UA.winEdge.replace("Windows NT 10.0", "Windows NT 6.1"), uad: UAD.winX64 });
+      const ow = await old.page.evaluate(() => { const e = document.getElementById("old-win"); return { shown: !!e && e.getClientRects().length > 0, text: e ? e.innerText : "" }; });
+      check(ow.shown && /not been tried/i.test(ow.text) && /ask someone/i.test(ow.text) && !/checks first|tells you/i.test(ow.text), "gm-site: on an older Windows the page says AurOS has not been tried there (Setup has no Windows-version check, so it must not say it checks)", JSON.stringify(ow));
+      await old.ctx.close();
+      const inst = await visit({ name: "gm-site install", url: HOME + "install.html", ua: UA.winEdge, uad: UAD.winX64 });
+      const it = await inst.page.evaluate(() => document.body.innerText.replace(/\s+/g, " "));
+      check(/404/.test(it) && /Not found/.test(it) && /try again later/.test(it) && !/in an hour/.test(it), "gm-site: install.html also says what to do if the download link says 404 (nothing is wrong with her computer)", "");
+      await inst.ctx.close();
+      // The press asks GitHub's release API first. Its 404 (no release open: "latest" skips pre-releases) keeps her on the
+      // page with a kind message instead of GitHub's bare 404 page; any other answer, or none, goes on to the file.
+      for (const [url, sel] of [[HOME, "#get"], [HOME, ".bar .pill"], [HOME + "install.html", "#get"]]) {
+        for (const [say, ms, what, comes] of [[404, 0, "no release open", false], [200, 0, "a release open", true], [403, 0, "GitHub's limit reached", true], [200, 5500, "no answer in 4 seconds", true]]) {
+          const v = await visit({ name: `gm-site download ${what}`, url, ua: UA.winEdge, uad: UAD.winX64 });
+          await githubSays(v.page, say, ms);
+          const asked = [];
+          v.page.on("request", (rq) => { if (/^https:\/\/github\.com\//.test(rq.url())) asked.push(rq.url()); });
+          const file = v.page.waitForEvent("download", { timeout: ms ? 9000 : 3000 }).then(() => true, () => false);
+          await v.page.click(sel);
+          const got = await file;
+          const m = await v.page.evaluate(() => { const e = document.getElementById("not-ready"); return { shown: !!e && e.getClientRects().length > 0, text: e ? e.innerText.replace(/\s+/g, " ") : "", alert: e ? e.getAttribute("role") : null, here: document.getElementById("here") ? document.getElementById("here").innerText : "" }; });
+          const at = `gm-site ${url.endsWith("install.html") ? "install" : "front"} ${sel}, ${what}`;
+          if (comes) check(got && !m.shown, `${at}: the file comes and no message is shown`, JSON.stringify({ got, m }));
+          else check(!got && asked.length === 0 && m.shown && m.alert === "alert" && /can.t be downloaded right now/.test(m.text) && /nothing is wrong with your computer/i.test(m.text) && /try again later/.test(m.text) && /Is AurOS working today\?/.test(m.text) && !/in an hour/.test(m.text), `${at}: she stays here, GitHub's 404 page is never opened, and a kind message says nothing is wrong and to try later`, JSON.stringify({ got, asked, m }));
+          if (!comes && sel === "#get" && url === HOME) { // pressing again once a release is open: the message goes and the file comes
+            await v.page.unroute("https://api.github.com/**");
+            await githubSays(v.page, 200);
+            const again = v.page.waitForEvent("download", { timeout: 3000 }).then(() => true, () => false);
+            await v.page.click("#get");
+            check(await again && await v.page.evaluate(() => document.getElementById("not-ready").hidden), `${at}: pressing again once a release is open brings the file and takes the message away`);
+          }
+          await v.ctx.close();
+        }
+      }
+      // A visit that is not Edge is not shown Edge's boxes as if they were its own.
+      for (const [name, ua, uad] of [["Chrome", UA.winChrome, UAD.winX64], ["Firefox", UA.winFirefox, null]]) {
+        const v = await visit({ name: `gm-site ${name} step 1`, ua, uad });
+        const c = await v.page.evaluate(() => { const li = document.querySelectorAll(".steps3 > li")[0]; const pic = li.querySelector(".s3-edge"); return { pic: getComputedStyle(pic).display, text: li.innerText.replace(/\s+/g, " ") }; });
+        check(c.pic === "none" && !/three dots|small arrow/i.test(c.text) && /Press the button that keeps it/.test(c.text) && /Do not press Delete\./.test(c.text) && /install\.html|Your browser.s words/.test(c.text), `gm-site ${name}: step 1 hides Edge's boxes and says the plain words, never Delete, with the way to its own words`, JSON.stringify(c));
+        await v.ctx.close();
+      }
+      // On a phone-sized window the pictures stay inside the screen, and no numbered circle is cut off at the edge.
+      {
+        const v = await visit({ name: "gm-site 390 pictures", ua: UA.winEdge, uad: UAD.winX64, viewport: { width: 390, height: 844 } });
+        const o = await v.page.evaluate(() => ({
+          wide: [...document.querySelectorAll(".steps3 .s3-pic")].filter((e) => e.scrollWidth > e.clientWidth + 1).length,
+          cut: [...document.querySelectorAll(".steps3 .hit[data-n]")].filter((e) => !e.matches(".e-dots, .e-arrow") && e.getBoundingClientRect().left < 52).map((e) => e.innerText.trim()),
+          page: document.documentElement.scrollWidth - innerWidth,
+        }));
+        check(o.wide === 0 && o.cut.length === 0 && o.page <= 0, "gm-site 390x844: the step pictures do not overflow, and no numbered circle is cut off at the left edge", JSON.stringify(o));
+        await v.ctx.close();
+      }
     }
     // A-06 (what she does when stuck, first), B-04 (the keyboard for the small buttons): the page the button opens
     for (const v of [{ name: "1366x768", viewport: { width: 1366, height: 768 } }, { name: "390x844", viewport: { width: 390, height: 844 } }]) {
