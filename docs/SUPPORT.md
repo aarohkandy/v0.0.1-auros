@@ -3,8 +3,9 @@
 AurOS is free and made by one person with the help of AI software. There is **no phone line**, and
 nobody from AurOS will ever phone you, ask to connect to your computer,
 or ask you for card numbers, passwords or gift cards. Anyone who does is
-not from AurOS: hang up or close the page. (The in-computer help page
-"AurOS will never call you" says the same thing, in more detail.)
+not from AurOS: hang up or close the page. (The in-computer help pages
+"Someone phoned about my computer" and "A page says my computer is
+infected" say the same thing, in more detail.)
 
 ## 1. On the computer itself
 
@@ -13,18 +14,35 @@ every look. It explains the bar at the bottom, and its button **Show me
 how to do things** opens the step-by-step help pages, which are on the
 computer and work without the internet:
 
-- Getting online
+Each page answers one question, in her words, and is no longer than two
+screens:
+
+- Getting on the internet (Wi-Fi, a new home, a cable)
+- My pictures and my Windows files
+- Music, letters and email
 - Getting a new program
 - Printing
 - Video calls
-- If something looks wrong (a stuck program, tiny words, no sound, a
-  frozen screen, AurOS not starting)
-- Going back to Windows
-- AurOS will never call you
+- Bigger words, louder sound
+- Turning it off
+- It is stuck, frozen or dark
+- A page says my computer is infected
+- Someone phoned about my computer
+- Going back to Windows (and, under it, removing AurOS, and what the
+  "Does everything work?" question does)
+- I forgot my PIN
+- Who do I ask?
+- Licenses and the source code
+
+Every page ends with a link to "Who do I ask?". The pages cannot be opened
+before AurOS has started, so the PIN screen has its own buttons; the
+"I forgot my PIN" page gives the same steps.
 
 The pages name no web address on purpose: they are copied into the
 image as they are, and an address written into them would go stale the
-day the project moves.
+day the project moves. `tools/helptest.py` keeps every one of these
+questions answered, and checks the buttons and sentences the pages name
+against the desktop's own code.
 
 ## 2. On the website
 
@@ -81,6 +99,6 @@ don't open a public issue: see [SECURITY.md](../SECURITY.md).
 
 > **Maintainers:** the promises on this page (no phone line, issues as
 > the channel, "a few days") must stay true. If a paid support service,
-> an email address or a forum is added, update this page, the help page
-> `rootfs/usr/share/auros/help/never-call.html`, and
+> an email address or a forum is added, update this page, the help pages
+> `rootfs/usr/share/auros/help/never-call.html` and `ask-someone.html`, and
 > `website/advanced.html` together.

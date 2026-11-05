@@ -44,6 +44,7 @@ main { padding-block: 8px 48px; }
 a { color: var(--ink); text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 0.18em; }
 a:focus-visible { outline: 4px solid var(--ink); outline-offset: 3px; border-radius: 8px; }
 .back { display: inline-flex; align-items: center; min-height: 48px; padding: 4px 0; font-weight: 700; }
+.back + .back { margin-left: 32px; }
 h1 { font-size: 40px; line-height: 48px; font-weight: 800; margin: 32px 0 12px; }
 h2 { font-size: 26px; line-height: 34px; font-weight: 700; margin: 48px 0 8px; }
 p { margin: 0 0 16px; }
@@ -70,9 +71,10 @@ dl.answers { margin: 16px 0 24px; }
 dl.answers dt { margin-top: 16px; }
 dl.answers dd { margin: 8px 0 0 0; }
 /* Pressable: a 2px rule, radius 12; hover changes only the border. */
-.topics { list-style: none; margin: 24px 0; padding: 0; display: grid; gap: 12px; }
+/* Two columns while there is room, so that every question is on the first two screens. */
+.topics { list-style: none; margin: 24px 0; padding: 0; display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(15em, 1fr)); }
 .topics a {
-  display: block; min-height: 64px; padding: 16px 24px; border: 2px solid var(--rule); border-radius: 12px;
+  display: block; height: 100%; min-height: 64px; padding: 16px 20px; border: 2px solid var(--rule); border-radius: 12px;
   background: var(--card); text-decoration: none;
 }
 .topics a:hover { border-color: var(--ink); }
