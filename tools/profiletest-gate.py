@@ -74,8 +74,8 @@ def _github_files(pages: object) -> list[str]:
 
 
 def decide(subject: str, files: list[str]) -> dict[str, object]:
-    if not files:
-        raise ValueError("GitHub returned no changed files")
+    # No files is what GitHub says of an empty commit, which every [publish] is;
+    # a failed or malformed answer stops earlier (the workflow, _github_files).
     invalid = [value for value in files if not _valid_path(value)]
     if invalid:
         raise ValueError(f"invalid changed path: {invalid[0]!r}")
@@ -250,7 +250,9 @@ def _selftest() -> None:
             pass
         else:
             raise AssertionError(f"unsafe diagnostic probe options accepted: {options!r}")
-    for files in ([], ["../src/main.c"], ["/src/main.c"], ["src\\main.c"]):
+    assert decide("[publish 1] [latest]", _github_files([{"files": []}]))["go"] is False
+    assert decide("[profiles office]", [])["list"] == ["office"]
+    for files in (["../src/main.c"], ["/src/main.c"], ["src\\main.c"]):
         try:
             decide("", files)
         except ValueError:

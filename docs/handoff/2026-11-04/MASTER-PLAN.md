@@ -38,6 +38,7 @@ warnings, the three screens and the restart, and can then live on it without any
 5. **One push to main** with `[release] [othersys]`: one VM run proved all othersys lanes. That second
    release failed on tests that had not kept up, so a third `[release]` carries their fixes.
 6. **Then** harden → `[publish N] [latest]`, the owner's step as above. Never `[release] [latest]` in one commit.
+   Done: `v0.1.0-b18733c` is the latest release, published by the owner in `b3ea3c9a`.
 7. **Walk it live** from `1os.vercel.app`, then update `SESSION-2026-11-04.md`.
 
 ## What no agent can do

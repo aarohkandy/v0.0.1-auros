@@ -9,3 +9,6 @@
 #   channel  after the first [apt] publish (docs/security/UPDATES.md)
 # tools/ops/waves.py refuses to open wave 1 while any of the five is missing.
 wishes
+site
+download
+pieces
