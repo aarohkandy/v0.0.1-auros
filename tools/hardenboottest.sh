@@ -706,7 +706,7 @@ EOPY
 }
 
 # What a screenshot shows: the trap page is dark red, the desktop's
-# cards are cream. Appended to that boot's record as
+# cards are paper. Appended to that boot's record as
 # shot_<name>=page|card|other.
 cat > "$T/shotkind.py" <<'EOPY'
 import sys
@@ -716,9 +716,10 @@ def at(x, y): i = (y * w + x) * 3; return px[i], px[i + 1], px[i + 2]
 # The margins, not the middle: a first-run dialog may sit over the page.
 pts = [at(x, y) for x, y in ((60, 100), (1220, 100), (60, 650), (1220, 650))]
 red = sum(1 for r, g, b in pts if r > 30 and g < 20 and b < 20)
-# cream paper, not the white of a window still starting
-cream = sum(1 for r, g, b in pts if r > 200 and g > 200 and b > 190 and r - b >= 6)
-print('page' if red >= 3 else 'card' if cream >= 3 else 'other')
+# The look's paper (Sky's #F5F7FA, cream before it), never the white of a
+# window still starting (Firefox's #F9F9FB is the nearest of those).
+paper = sum(1 for r, g, b in pts if min(r, g) > 200 and b > 190 and max(r, g, b) <= 250)
+print('page' if red >= 3 else 'card' if paper >= 3 else 'other')
 EOPY
 shotkinds() { # label
     for f in "$T"/shot."$1".*.ppm; do

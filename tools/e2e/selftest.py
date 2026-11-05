@@ -54,6 +54,51 @@ def titles(stop):
     return out
 
 
+def test_confirm_start():
+    sys.path.insert(0, HERE)
+    try:
+        import e2e
+    except ImportError:
+        print("  (no numpy here: second question not checked)")
+        return
+
+    class M:
+        def __init__(self): self.did = []
+        def move(self, x, y): self.did.append("move")
+        def click(self, x, y, label=None): self.did.append("click")
+        def key(self, key, label=None): self.did.append(key)
+        def screendump(self): return object()
+        def shot(self, label): pass
+    def word(text, y):
+        return [{"text": t, "x": 100 + i * 60, "y": y, "w": 50, "h": 20, "conf": 90, "line": y}
+                for i, t in enumerate(text.split())]
+    head = word("Start AurOS from now on?", 100)
+    button = word("Start AurOS from now on", 320)
+    done = word("You are all set", 100)
+
+    def run(first, second, third):
+        reads = [second, third]
+        real, e2e.vision.ocr = e2e.vision.ocr, lambda img: reads.pop(0)
+        sleep, e2e.time.sleep = e2e.time.sleep, lambda s: None
+        flow = object.__new__(e2e.Flow)
+        flow.m = M()
+        flow.log = lambda s: None
+        try:
+            flow.confirm_start(first)
+            return flow.m.did
+        except e2e.Failure:
+            return flow.m.did + ["RED"]
+        finally:
+            e2e.vision.ocr, e2e.time.sleep = real, sleep
+
+    check(run(done, [], []) == [], "second question: no heading, no press")
+    check(run(head + button, head + button, done) == ["move", "click"],
+          "second question: the button is pressed, not the heading")
+    check(run(head, head, done) == ["move", "ret"],
+          "second question: a button OCR cannot read is answered with Enter")
+    check(run(head, head, head)[-1] == "RED", "second question: still asking is RED")
+
+
 def test_expect():
     exp = variant_expect()
     check(set(exp) == set(STOP) | {"hdd"}, f"VARIANT_EXPECT covers {sorted(STOP)} and hdd")
@@ -1818,6 +1863,7 @@ def test_busy_wizard_diagnostic():
 
 
 test_expect()
+test_confirm_start()
 test_wizard_contract()
 test_stops()
 test_bitlocker_verdict()

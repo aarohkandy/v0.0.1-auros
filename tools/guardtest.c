@@ -455,9 +455,9 @@ static void wired(const char *main_c)
     }
     ok("the card answers the keyboard before the panels it opens over",
        gk && nk && on_guard_line && gk < nk);
-    char *gp = strstr(s, "guard_paint(&c, fb, &f);");
-    char *wp = strstr(s, "welcome_paint(&c, fb, &f);");
-    char *fp = strstr(s, "foot_paint(&c, fb, &f);");
+    char *gp = strstr(s, "guard_paint(&c, frame, &f);");
+    char *wp = strstr(s, "welcome_paint(&c, frame, &f);");
+    char *fp = strstr(s, "foot_paint(&c, frame, &f);");
     ok("painted over the welcome question and under the band",
        gp && wp && fp && wp < gp && gp < fp);
     int clicks = 0;

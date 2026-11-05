@@ -164,7 +164,9 @@ class Firefox:
                  XDG_CACHE_HOME=os.path.join(self.home, ".cache"),
                  # containers and CI runners often forbid the user namespaces
                  # the content sandbox wants; nothing here loads a web page.
-                 MOZ_DISABLE_CONTENT_SANDBOX="1")
+                 MOZ_DISABLE_CONTENT_SANDBOX="1",
+                 # newer Firefox wants this too, beside --remote-allow-system-access
+                 MOZ_REMOTE_ALLOW_SYSTEM_ACCESS="1")
         for k in list(e):
             if k.startswith("MOZ_CRASHREPORTER") or k in ("DISPLAY", "WAYLAND_DISPLAY"):
                 del e[k]

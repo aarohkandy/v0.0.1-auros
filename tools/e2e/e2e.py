@@ -1883,14 +1883,32 @@ class Flow:
                 raise Failure("AurOS's 'Does everything work?' question took no press of Yes in 3 tries")
             self.m.shot("after-yes")
             self.log("after yes: " + vision.text_of(words)[:600])
-            # The newer first start asks once more: "Start AurOS from now on?" with
-            # a button of that name (the lowest match: its heading says it too).
-            sure = vision.find_text(words, "Start AurOS from now on", last=True)
-            if sure and vision.find_text(words, "Not yet"):
-                self.m.click(*vision.centre(sure), label="AurOS: Start AurOS from now on")
-                time.sleep(12)
-                self.m.shot("after-start")
-                self.log("after start: " + vision.text_of(vision.ocr(self.m.screendump()))[:600])
+            self.confirm_start(words)
+
+    def confirm_start(self, words):
+        """The first start asks once more: "Start AurOS from now on?", with a
+        button of that name under a heading that says it too."""
+        heading = vision.find_text(words, "Start AurOS from now on")
+        if not heading:
+            return
+        # The press of Yes left the pointer where this page has its button, and
+        # a pointer over letters makes them unreadable: run 41957692349 read
+        # "Start Auros|rom now on", saw only the heading, and never pressed.
+        self.m.move(1150, 300)
+        time.sleep(1)
+        words = vision.ocr(self.m.screendump())
+        sure = vision.find_text(words, "Start AurOS from now on", last=True)
+        if sure and sure[1] > heading[1] + heading[3]:
+            self.m.click(*vision.centre(sure), label="AurOS: Start AurOS from now on")
+        else:
+            # The green button has the focus, as it does for someone on the keyboard.
+            self.m.key("ret", label="AurOS: Start AurOS from now on (Enter)")
+        time.sleep(12)
+        self.m.shot("after-start")
+        words = vision.ocr(self.m.screendump())
+        self.log("after start: " + vision.text_of(words)[:600])
+        if vision.find_text(words, "Start AurOS from now on"):
+            raise Failure("'Start AurOS from now on' is still asking after its press")
 
     # -- 6. M3: a program from the store --
     def store(self):
