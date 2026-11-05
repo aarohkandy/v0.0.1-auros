@@ -16,6 +16,7 @@ cd "$(dirname "$0")/.."
 fail=0
 
 python3 -I tools/scamtest/firefoxpolicy.py --prove || fail=$((fail + 1))
+python3 -I tools/scamtest/startpage.py --prove || fail=$((fail + 1))
 node tools/scamtest/remoteaccess.js --prove || fail=$((fail + 1))
 python3 -I tools/scamtest/guardprove.py --prove || fail=$((fail + 1))
 # The browser, for real: Mozilla's Firefox on the shipped policy file. Skipped

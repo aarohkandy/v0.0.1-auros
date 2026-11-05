@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Start</title>
+<!-- The page "Internet" opens on (rootfs/etc/firefox/policies/policies.json,
+     Homepage). It is on the computer, so it opens with no internet. Nothing
+     is fetched from anywhere, there is no script and no counter: something
+     leaves the computer only when she presses a button or Search.
+     tools/scamtest/startpage.py checks it. -->
+<style>
+:root { color-scheme: light; }
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 24px 32px 48px; color: #17181A;
+  background: #EEF3F8 linear-gradient(135deg, #EEF3F8 0%, #B9E0F2 45%, #C8EEDF 75%, #E2D9F6 100%) fixed;
+  font-family: "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", "DejaVu Sans", sans-serif;
+  font-size: 24px; line-height: 34px;
+}
+main { max-width: 1040px; margin: 0 auto; }
+h1 { font-size: 44px; line-height: 52px; font-weight: 800; margin: 8px 0 24px; }
+.grid { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin: 0 0 32px; }
+a.go {
+  display: block; min-height: 112px; padding: 20px 28px; border: 3px solid #687079; border-left: 16px solid var(--c);
+  border-radius: 22px; background: #FFFFFF; color: #17181A; text-decoration: none;
+}
+a.go:hover { border-color: #17181A; border-left-color: var(--c); }
+a.go:focus-visible, input:focus-visible, button:focus-visible { outline: 5px solid #17181A; outline-offset: 3px; }
+a.go b { display: block; font-size: 38px; line-height: 46px; }
+a.go span { display: block; color: #33363B; }
+form { background: #FFFFFF; border: 3px solid #687079; border-radius: 22px; padding: 20px 28px 28px; }
+label { display: block; font-weight: 700; margin-bottom: 12px; }
+.row { display: flex; flex-wrap: wrap; gap: 16px; }
+input { flex: 1 1 320px; min-height: 72px; padding: 0 20px; font: inherit; font-size: 32px; border: 3px solid #687079; border-radius: 14px; background: #FFFFFF; color: #17181A; }
+button { flex: 0 0 auto; min-height: 72px; min-width: 200px; padding: 0 36px; font: inherit; font-size: 32px; font-weight: 800; border: 3px solid #07463B; border-radius: 14px; background: #0B5D4F; color: #FFFFFF; cursor: pointer; }
+button:hover { background: #07463B; }
+</style>
+</head>
+<body>
+<main>
+<h1>What would you like to open?</h1>
+<div class="grid">
+<a class="go" style="--c:#9E2B22" href="https://mail.google.com/"><b>Gmail</b><span>Email from Google</span></a>
+<a class="go" style="--c:#2F5A8A" href="https://outlook.live.com/mail/"><b>Outlook</b><span>Email from Microsoft, and Hotmail</span></a>
+<a class="go" style="--c:#1F6C6A" href="https://meet.google.com/"><b>Video calls</b><span>See and talk to family</span></a>
+<a class="go" style="--c:#B5392F" href="https://www.youtube.com/"><b>YouTube</b><span>Films and music</span></a>
+<a class="go" style="--c:#6E4A78" href="https://news.google.com/"><b>News</b><span>What is happening today</span></a>
+<a class="go" style="--c:#2F5A8A" href="https://www.google.com/search?q=weather"><b>Weather</b><span>Today and the days ahead</span></a>
+<a class="go" style="--c:#8A5A12" href="https://www.amazon.com/"><b>Shopping</b><span>Amazon</span></a>
+</div>
+<form action="https://www.google.com/search" method="get">
+<label for="q">Or look for anything:</label>
+<div class="row"><input id="q" name="q" type="search" autocomplete="off"><button type="submit">Search</button></div>
+</form>
+</main>
+</body>
+</html>
