@@ -67,7 +67,7 @@ REPO = os.path.dirname(HERE)
 # What the index lists, one card each, in her words.
 TOPICS = ["getting-online.html", "my-files.html", "everyday.html", "programs.html",
           "printing.html", "video-calls.html", "words-and-sound.html", "turn-off.html",
-          "something-wrong.html", "scary-page.html", "never-call.html", "windows.html",
+          "computer-full.html", "something-wrong.html", "scary-page.html", "never-call.html", "windows.html",
           "forgot-pin.html", "ask-someone.html", "licenses.html"]
 # Pages the topics lead on to (windows.html links both). They lead back too.
 SUBPAGES = ["remove-auros.html", "first-days.html"]
@@ -90,6 +90,7 @@ QUESTIONS = [
     ("how do I use email",                    "everyday.html", ["Email", "Internet"]),
     ("how do I install something",            "programs.html", ["Get more programs", "Install", "Open"]),
     ("how do I turn it off",                  "turn-off.html", ["Turn off", "Turn it off", "Start it again"]),
+    ("a message says the computer is getting full", "computer-full.html", ["getting full", "Downloads", "Delete", "Empty Trash"]),
     ("a program is stuck",                    "something-wrong.html", ["Close this", "Count to three"]),
     ("it is frozen",                          "something-wrong.html", ["Nothing on the screen answers", "power button", "Start it again"]),
     ("the screen went dark",                  "something-wrong.html", ["The screen went dark", "any key"]),
@@ -218,8 +219,8 @@ def band_labels():
 
 # Buttons in other people's programs that the pages name: Firefox's camera
 # question, the print window, and Get more programs (GNOME Software).
-# (and "Add", the Printers window's own button.)
-OTHER_BUTTONS = {"Allow", "Block", "Print", "Install", "Open", "Installed", "Add"}
+# (and "Add", the Printers window's own button, and "Trash" and "Empty Trash", in her files.)
+OTHER_BUTTONS = {"Allow", "Block", "Print", "Install", "Open", "Installed", "Add", "Trash", "Empty Trash"}
 
 
 def desktop_words():

@@ -115,6 +115,9 @@ int  foot_help_open(const shell_ctx *c);
 #define FOOT_HELP_PAGES "/usr/share/auros/help/index.html"
 #endif
 int  foot_help_button(const shell_ctx *c, int sw, int sh, rect *out);
+/* One page of those pages ("computer-full"), in a window of its own: what a card that says
+ * "help:<page>" opens (main.c). Nothing happens for a name that is not letters and hyphens. */
+void foot_open_help_page(shell_ctx *c, const char *page);
 /* The two Wishes buttons under it ("What my wishes did today", "Stop all
  * wishes"), idx 0 and 1, only when Wishes are on this computer
  * (shell_wish_app >= 0). They set c->want_wish (WISH_CMD_*, wish.h) and the

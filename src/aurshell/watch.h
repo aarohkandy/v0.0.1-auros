@@ -6,10 +6,10 @@
  * it has lost her work.
  *
  * So: one thing, called once a second, that watches for the handful of
- * facts a computer should speak up about. Today that is the battery.
- * It is a separate file because the list will grow -- a disk filling
- * up, a fan that has stopped -- and because none of it belongs in the
- * middle of the frame loop.
+ * facts a computer should speak up about. Today that is the battery
+ * and the room left for her files. It is a separate file because the
+ * list will grow -- a fan that has stopped -- and because none of it
+ * belongs in the middle of the frame loop.
  *
  * WHAT IT WILL NOT DO
  *
@@ -37,5 +37,17 @@ int watch_tick(shell_ctx *c);
 #define WATCH_LOW       20
 #define WATCH_VERY_LOW  10
 #define WATCH_CRITICAL   3
+
+/* THE ROOM LEFT. A computer with about 28 GB of her own fills up, quietly, and the first she
+ * knows of it is a program that will not save. One calm card when it is nine tenths used,
+ * which opens a help page (rootfs/usr/share/auros/help/WATCH_DISK_HELP.html) when she presses
+ * it; said once, and again only after the room has been made and it fills up again. */
+#define WATCH_DISK_FULL   90          /* percent used: say so                            */
+#define WATCH_DISK_REARM  85          /* ...below this, a later fill says it again       */
+#define WATCH_DISK_HELP   "computer-full"
+/* How much of the file system `path` is on is used, in percent (what `df` shows), or -1. */
+int watch_disk_used(const char *path);
+/* The decision: `used` percent. 1 if it put a card up. (Called once a minute by watch_tick.) */
+int watch_disk_check(shell_ctx *c, int used);
 
 #endif

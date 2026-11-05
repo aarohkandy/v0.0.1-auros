@@ -6,6 +6,7 @@
 #   hittest     a click lands where the look painted; nothing highlights that cannot be pressed
 #   kiosktest   the school-kiosk allow-list is what the product says it is
 #   appstest    a hidden tool stays hidden; Letters is one of the four on her dock
+#   watchtest   the room left on the computer: one calm card at nine tenths, and the page it opens
 #   launchtest  can she start a program from every home
 #   nettest     what nmcli prints becomes what she reads
 #   powertest   battery and brightness, from constructed machines
@@ -46,6 +47,9 @@ run modaltest  $S/foot.c $DRAW
 run hittest    $DRAW
 run kiosktest  $S/apps.c $DRAW
 run appstest   $S/apps.c $DRAW
+# watchtest needs dbus for the notices, and the help page it opens from where it is run
+run watchtest  $S/watch.c $S/notify.c $S/osd.c $S/power.c $S/run.c $S/foot.c $DRAW \
+               -DFOOT_HELP_PAGES='"rootfs/usr/share/auros/help/index.html"' $(pkg-config --cflags --libs dbus-1)
 run launchtest $DRAW
 run nettest    $S/net.c $DRAW
 run powertest  $S/power.c $S/run.c

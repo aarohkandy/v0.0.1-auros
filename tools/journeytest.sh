@@ -113,6 +113,10 @@ for look in taskbar dock rail tiles; do
                                                                            ok "$at: no ready card over the store's own Open button; one when she is elsewhere" $?
         grep -q 'want_card = shell_want_ready_card' src/aurshell/main.c && grep -q 'want_card && i < k' src/aurshell/main.c
                                                                            ok "$at: ...and the shell's loop asks it (a rule nobody calls protects nobody)" $?
+        # A card that says "help:<page>" (the room left, watch.c) is opened by the host: the one
+        # call and the one rule it relies on are in the loop (watchtest proves the page opens).
+        grep -q 'foot_open_help_page(&c, oid + 5)' src/aurshell/main.c && grep -q 'watch_tick(&c)' src/aurshell/main.c
+                                                                           ok "$at: ...and the shell's loop opens the help page a card names, and watches the room" $?
         # One primary action per panel: no screen of the first ten minutes draws two lit buttons.
         ! awk '/^&& primary/ && $3 > 1 { bad = 1 } END { exit !bad }' "$log"
                                                                            ok "$at: no panel draws two primary buttons" $?

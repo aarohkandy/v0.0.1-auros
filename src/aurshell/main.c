@@ -1485,9 +1485,12 @@ int main(int argc, char **argv)
          * so the rail scrolls to it and the tiles grow into it. */
         {
             char oid[32];
-            if (notify_take_open(oid, sizeof oid))
+            if (notify_take_open(oid, sizeof oid)) {
+                if (!strncmp(oid, "help:", 5)) { foot_open_help_page(&c, oid + 5); dirty = 1; }
+                else
                 for (int i = 0; i < c.n_apps; i++)
                     if (!strcmp(c.apps[i].id, oid)) { c.want_launch = i + 1; break; }
+            }
             if (c.want_launch > 0 && c.want_launch <= c.n_apps && !SHELL_PANEL_OPEN(&c)) {
                 int wi = shell_launch(&c, c.want_launch - 1);
                 if (wi >= 0) {

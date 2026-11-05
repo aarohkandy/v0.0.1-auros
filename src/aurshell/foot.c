@@ -335,19 +335,44 @@ static int help_button_at(const shell_ctx *c, int x, int y)
            x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
 }
 
+/* A help page in a NEW window, because a new window is what the shell brings to the front. A
+ * page handed to a browser that is already open becomes a tab in a window she may not be
+ * looking at. `url` is a file:// address inside the help folder. */
+static void spawn_help(shell_ctx *c, const char *url)
+{
+    static const char SCRIPT[] =
+        "command -v firefox >/dev/null 2>&1 && exec firefox --new-window \"$0\"; "
+        "exec xdg-open \"$0\"";
+    char blob[sizeof SCRIPT + 600];
+    size_t n = 0;
+    n += (size_t)snprintf(blob + n, sizeof blob - n, "sh") + 1;
+    n += (size_t)snprintf(blob + n, sizeof blob - n, "-c") + 1;
+    n += (size_t)snprintf(blob + n, sizeof blob - n, "%s", SCRIPT) + 1;
+    if (strlen(url) + n + 2 >= sizeof blob) return;
+    n += (size_t)snprintf(blob + n, sizeof blob - n, "%s", url) + 1;
+    blob[n] = 0;
+    c->spawn(c, blob, 4);
+}
+
 static void open_help_pages(shell_ctx *c)
 {
     c->help_open = 0;
     if (!c->spawn || !help_pages_here()) return;
-    /* A NEW window, because a new window is what the shell brings to
-     * the front. A page handed to a browser that is already open
-     * becomes a tab in a window she may not be looking at. */
-    static const char ARGV[] =
-        "sh\0-c\0"
-        "command -v firefox >/dev/null 2>&1 && exec firefox --new-window \"$0\"; "
-        "exec xdg-open \"$0\"\0"
-        "file://" FOOT_HELP_PAGES;
-    c->spawn(c, ARGV, 4);
+    spawn_help(c, "file://" FOOT_HELP_PAGES);
+}
+
+/* One page of the help, from a card (watch.c: "help:computer-full"): the page's name, letters
+ * and hyphens only, in the folder the index is in. */
+void foot_open_help_page(shell_ctx *c, const char *page)
+{
+    if (!c->spawn || !help_pages_here() || !page || !*page || strlen(page) > 40) return;
+    for (const char *p = page; *p; p++)
+        if (!((*p >= 'a' && *p <= 'z') || *p == '-')) return;
+    char url[400];
+    const char *slash = strrchr(FOOT_HELP_PAGES, '/');
+    int dir = slash ? (int)(slash - FOOT_HELP_PAGES) + 1 : 0;
+    snprintf(url, sizeof url, "file://%.*s%s.html", dir, FOOT_HELP_PAGES, page);
+    spawn_help(c, url);
 }
 
 /* ── her chosen size, kept where she can own it ─────────────────────
