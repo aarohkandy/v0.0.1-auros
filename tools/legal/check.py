@@ -109,6 +109,26 @@ def check_offer(root=None):
     return out
 
 
+def check_help_mail(root=None):
+    """Setup draws one address (HELP_MAIL in wizard.c) on every page it stops on. set-contact
+    only rewrites CONTACT_EMAIL, so a changed mailbox would leave Setup naming the old one:
+    it must be the address the written offer gives (once the offer has one)."""
+    root = root or ROOT
+    w = os.path.join(root, "src/aurbridge/wizard.c")
+    o = os.path.join(root, "rootfs/usr/share/doc/auros/SOURCE-OFFER")
+    if not os.path.isfile(w):
+        return ["src/aurbridge/wizard.c does not exist (it holds HELP_MAIL, the address Setup shows)"]
+    m = re.search(r'#define\s+HELP_MAIL\s+L"([^"]*)"', open(w, encoding="utf-8").read())
+    if not m or not valid_address(m.group(1)):
+        return ["src/aurbridge/wizard.c has no HELP_MAIL that is an email address"]
+    given = re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+",
+                      open(o, encoding="utf-8").read()) if os.path.isfile(o) else None
+    if given and given.group(0) != m.group(1):
+        return ["src/aurbridge/wizard.c HELP_MAIL is %s, and the written offer gives %s: set-contact does not "
+                "rewrite HELP_MAIL, change it by hand" % (m.group(1), given.group(0))]
+    return []
+
+
 def check_placeholders(launch, root=None):
     root = root or ROOT
     out, seen = [], 0
@@ -377,6 +397,7 @@ CHECKS = [check_pages, check_claims, check_marks_site]
 def run(launch=False, root=None):
     problems = []
     problems += check_offer(root)
+    problems += check_help_mail(root)
     p, seen = check_placeholders(launch, root)
     problems += p
     if launch:
@@ -419,6 +440,14 @@ def selftest():
             open(offer, "w").write(good.replace(old, new))
             want(label, run(False, d)[0], needle)
         open(offer, "w").write(good)
+        # the address Setup draws is the one the offer gives
+        wz = os.path.join(d, "src/aurbridge/wizard.c"); os.makedirs(os.path.dirname(wz), exist_ok=True)
+        open(wz, "w").write('#define HELP_MAIL  L"someone.else@example.org"\n')
+        want("a Setup that names another mailbox than the offer is refused", check_help_mail(d), "HELP_MAIL is someone.else@example.org")
+        open(wz, "w").write("no address here\n")
+        want("a Setup with no HELP_MAIL is refused", check_help_mail(d), "no HELP_MAIL")
+        os.remove(wz)
+        ok = not check_help_mail(ROOT); print("%s  the real Setup names the real mailbox" % ("ok  " if ok else "FAIL")); bad += 0 if ok else 1
         # placeholders
         open(os.path.join(d, "website/licenses.html"), "w").write("<p>write to CONTACT_EMAIL [OWNER: x]</p>")
         pr, seen = run(True, d)
