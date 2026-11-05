@@ -49,6 +49,7 @@
         <a class="ghost" href="#steps">See how</a>
       </p>
       <p class="facts-line not-sure">Not sure which Windows you have? Press <b>Get AurOS</b>. Setup checks, and <span data-claim="stop:nothing-changed">changes nothing if it can&rsquo;t go on</span>.</p>
+      <p class="not-ready" id="not-ready" role="alert" hidden>AurOS can&rsquo;t be downloaded right now. Nothing is wrong with your computer, and nothing on it has changed. Please try again later. <a href="status.html">Is AurOS working today?</a> If it still doesn&rsquo;t work after a day, ask someone who helps you to write to aarohkandy@gmail.com.</p>
       <p class="old-win" id="old-win" hidden>AurOS is made for Windows&nbsp;10 or&nbsp;11, and this computer may have an older Windows. AurOS has not been tried on older Windows, so ask someone who knows computers before you go on.</p>
     </div>
 
@@ -93,9 +94,9 @@
   <!-- The three things she wonders before she presses anything, in her words. -->
   <section class="sec trust" id="safe" aria-labelledby="safe-title">
     <div class="wrap">
-      <h2 class="sec-title" id="safe-title">Is this safe? <span>Who made it? What does it cost?</span></h2>
+      <h2 class="sec-title" id="safe-title">Before you press anything.</h2>
       <div class="qa-list">
-        <div class="qa"><h3>Is this safe?</h3><div><p>AurOS is made to keep Windows and your files, and to let you go back. Any change to a drive carries some risk, so copy the photos you treasure onto a memory stick first. Edge and Windows will warn you about the file, because few people have downloaded it yet and it has no company name on it. <a href="#steps">Step 1 shows each warning and what to press.</a></p></div></div>
+        <div class="qa"><h3>Is this safe?</h3><div><p>AurOS is made to keep Windows and your files, and to let you go back. Any change to a drive carries some risk, so copy the photos you treasure onto a memory stick first. Edge and Windows may warn you about the file, because few people have downloaded it yet and it has no company name on it. <a href="#steps">Step 1 shows each warning and what to press.</a></p></div></div>
         <div class="qa"><h3>Who made it?</h3><div><p>One person, with the help of AI software. Not Microsoft. Anyone can read the <a href="https://github.com/@AUROS_REPO@">source code</a>. Write to aarohkandy@gmail.com.</p></div></div>
         <div class="qa"><h3>What does it cost?</h3><div><p>Nothing. No ads, no subscription.</p></div></div>
       </div>
@@ -151,12 +152,12 @@
       <p class="sec-lede">AurOS needs at least <span data-fact="auros-need-gb">28</span>&nbsp;GB of empty room on your Windows drive. Setup checks before it changes anything.</p>
       <ol class="steps3">
         <li class="s3" id="step-download">
-          <p class="here" id="here" role="status" data-say="You are here: your browser is asking if you trust the file. Look at the box at the top right of your browser, and press what the numbered circles show."></p>
+          <p class="here" id="here" role="status" data-say="You are here: your browser is asking if you trust the file. Look at the small box your browser opened, usually at the top right of its window, and press what the numbered circles show."></p>
           <!-- Real Edge (Windows 11, October 2026; docs/handoff e2e shots 0012-0015): the Downloads box shows a
                trash can and a small three-dot button, on the file only while the mouse is over it; its menu
                has Delete and Keep; Keep opens a box whose black button is Delete, with Keep anyway in a
                small flyout behind the arrow beside it. Drawn the same on install.html. -->
-          <div class="s3-pic s3-edge" aria-hidden="true">
+          <div class="s3-pic s3-edge s3-for-edge" aria-hidden="true">
             <p class="sb-title">In Edge: Downloads</p>
             <div class="e-item">
               <span class="e-text">AurOS-Setup.exe isn&rsquo;t commonly downloaded.</span>
@@ -171,31 +172,38 @@
             <div class="e-menu e-menu-small"><span class="e-mi hit" data-n="4">Keep anyway</span></div>
           </div>
           <h3><span class="s3-n" aria-hidden="true">1</span><span class="vh">Step 1: </span>Download it</h3>
-          <p>Move the mouse over the file. Press the three dots, then <b>Keep</b>. Edge asks again: press the small arrow beside <b>Delete</b>, then <b>Keep anyway</b>.</p>
+          <p class="s3-for-edge">Move the mouse over the file. Press the three dots, then <b>Keep</b>. Edge asks again: press the small arrow beside <b>Delete</b>, then <b>Keep anyway</b>.</p>
+          <p class="s3-for-other">Your browser asks if you trust the file. Press the button that keeps it. Its words depend on your browser.</p>
           <p><b>Do not press Delete.</b> If you did, just press <b>Get AurOS</b> again.</p>
-          <p>Using Chrome or Firefox? <a href="install.html#step-download">Its words are here.</a></p>
+          <p><span class="s3-for-edge">Using Chrome or Firefox? </span><a href="install.html#step-download">Your browser&rsquo;s words are here.</a></p>
         </li>
         <li class="s3">
-          <div class="s3-pic s3-ss" aria-hidden="true">
-            <p class="ss-head">Windows protected your PC</p>
-            <p class="ss-small">App: AurOS-Setup.exe</p>
-            <p class="sb-row right"><span class="ss-btn hit" data-n="1">Run anyway</span><span class="ss-btn">Don&rsquo;t run</span></p>
+          <!-- Real Windows 11 (docs/handoff e2e shot 0019): Open file in Edge's Downloads goes straight to this
+               box, with Yes the white button on the left and No the blue one. The blue Windows protected
+               your PC box did not appear in that run, so it is in the words ("may"), not drawn as certain. -->
+          <div class="s3-pic s3-uac" aria-hidden="true">
+            <p class="ua-q">Do you want to allow this app from an unknown publisher to make changes to your device?</p>
+            <p class="ua-app">AurOS-Setup.exe</p>
+            <p class="sb-row"><span class="ua-btn hit">Yes</span><span class="ua-btn ua-no">No</span></p>
           </div>
           <h3><span class="s3-n" aria-hidden="true">2</span><span class="vh">Step 2: </span>Say yes to Windows</h3>
-          <p>Press <b>Open file</b>. If Windows shows a blue box, press <b>More info</b>, then <b>Run anyway</b>. Then press <b>Yes</b>, the white button.</p>
+          <p>Press <b>Open file</b>. Windows may first show a blue box, <b>Windows protected your PC</b>. If it does, press <b>More info</b>, then <b>Run anyway</b>. Then Windows asks if this app may make changes. Press <b>Yes</b>, the white button.</p>
         </li>
         <li class="s3">
           <div class="s3-pic s3-setup" aria-hidden="true">
             <p class="st-title">Ready to install</p>
-            <p class="sb-row right"><span class="st-btn hit" data-n="1" data-ui="wizard">Install AurOS</span></p>
+            <p class="sb-row right"><span class="st-btn hit" data-ui="wizard">Install AurOS</span></p>
           </div>
           <h3><span class="s3-n" aria-hidden="true">3</span><span class="vh">Step 3: </span>Pick a look, then install</h3>
           <p>It restarts once, by itself.</p>
         </li>
       </ol>
       <p class="sec-more"><a href="install.html">Every screen, with pictures</a></p>
-      <p class="sec-more" id="blocked">If your antivirus takes the file, or Windows says <b>Smart App Control</b> blocked it, nothing has been changed. <a href="install.html#antivirus">What to do</a></p>
-      <p class="sec-more" id="notfound">If a page that says <b>404</b> or <b>Not found</b> opens instead, the download isn&rsquo;t ready. Nothing is wrong with your computer. Press the back arrow at the top left of your browser and try again in an hour. <a href="status.html">Is AurOS working today?</a></p>
+      <div id="blocked">
+        <p class="sec-more">If your antivirus takes the file, nothing has been changed. <a href="install.html#antivirus">What to do</a></p>
+        <p class="sec-more">If Windows says <b>Smart App Control</b> blocked it, nothing has been changed either. <a href="install.html#smart-app-control">What to do</a></p>
+      </div>
+      <p class="sec-more" id="notfound">If a page that says <b>404</b> or <b>Not found</b> opens instead, the download isn&rsquo;t open yet. Nothing is wrong with your computer. Press the back arrow at the top left of your browser and try again later. <a href="status.html">Is AurOS working today?</a></p>
     </div>
   </section>
 
