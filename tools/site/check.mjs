@@ -949,7 +949,8 @@ for (const [at, want] of [
     // How far AurOS has been tried: tools/site/journey.json counts runs on a real computer (F's e2e is a virtual one).
     tested: (() => { try { return JSON.parse(read("tools/site/journey.json")).real_pc_runs > 0 ? "real" : "virtual"; } catch { return "unknown"; } })(),
     dark: /Restart now: the screen goes black for a minute or two/.test(wizard) ? "minute-or-two" : "other",
-    stop: /AurOS stops here\. Nothing was changed\./.test(wizard) && /Nothing on this computer has been changed\./.test(wizard) ? "nothing-changed" : "other",
+    // the first check that stops says nothing was changed; a stop after the download began or a fix ran says what was (changed_says)
+    stop: /static const wchar_t \*changed_says\(void\)[\s\S]*?L"Nothing on this computer has been changed\."/.test(wizard) ? "nothing-changed" : "other",
     release: (() => { const y = read(".github/workflows/release.yml"); const p = (y.match(/\n  promote:\n[\s\S]*?(?=\n  [a-z][\w-]*:\n)/) || [""])[0];
       // promote waits for the e2e job and asks the jobs themselves (tools/releasegate.py e2e: the real-Windows
       // journey of THIS exe passed), and the site is deployed only after promote
