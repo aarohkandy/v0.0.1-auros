@@ -35,8 +35,8 @@ warnings, the three screens and the restart, and can then live on it without any
 3. **Candidate.** `e503f76c` (build run 41939828813) and its harden are green. `[publish 41939828813] [latest]`
    was refused by the agent's permission check (public surface), so publishing is the owner's step.
 4. **Integrate.** The lead reads every diff, merges into `wave/base`, runs every check.
-5. **One push to main** with `[release] [othersys]`: one VM run proves all othersys lanes, and the same
-   commit is the second release.
+5. **One push to main** with `[release] [othersys]`: one VM run proved all othersys lanes. That second
+   release failed on tests that had not kept up, so a third `[release]` carries their fixes.
 6. **Then** harden → `[publish N] [latest]`, the owner's step as above. Never `[release] [latest]` in one commit.
 7. **Walk it live** from `1os.vercel.app`, then update `SESSION-2026-11-04.md`.
 
