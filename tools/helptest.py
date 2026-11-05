@@ -404,6 +404,9 @@ def code_facts(flat):
     printing = flat.get("printing.html", "")
     check(re.search(r"Press Settings at the bottom of the screen, then Printers", printing) is not None,
           "the printing page says how to reach it: Settings, then Printers")
+    check('case R_FILES:   return "Bring my files across";' in settings_c and
+          re.search(r"press Settings at the bottom of the screen, then Bring my files across", flat.get("my-files.html", "")) is not None,
+          "the files page says where \"Not now\" leaves them: Settings, then Bring my files across (a Settings row)")
     hidden = 'has_cat(e, "X-GNOME-Settings-Panel")' in read("src/aurshell/apps.c")
     check(not (hidden and re.search(r"\bPrinters\b", printing) and "R_PRINTERS" not in settings_c),
           "the printing page does not send her to a Printers program that the desktop does not list")
