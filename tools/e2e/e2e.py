@@ -2008,26 +2008,7 @@ class Flow:
                 self.m.shot("store-no-result-yet")
             if not found:
                 raise Failure(f"no '{STORE_RESULT}' in the search results after three searches")
-            self.m.click(*vision.centre(found), label="open result " + STORE_RESULT)
-            # The page's one big button: "Install", then (when done) "Open". Found as
-            # the solid block of the theme's accent in the page header and read by
-            # OCR on its own; full-screen OCR missed "Install" on a gold button (run
-            # 40005591638). On the light theme its letters are dark on dark green and
-            # cannot be read at all (run 40038619603, 0025-store-no-install.png), so
-            # an UNREADABLE block in the header counts as the button, and what it does
-            # is watched in pixels: it goes away while installing and comes back as Open.
-            deadline = time.time() + 300
-            btn = None
-            while time.time() < deadline and not btn:
-                time.sleep(8)
-                img = self.m.screendump()
-                b = self.store_button(img)
-                if b:
-                    self.log(f"the store's button reads {b[1]!r} at {b[0]}")
-                    if not b[1] or label_is(b[1], STORE_INSTALL):
-                        btn = b[0]
-                if not btn:
-                    btn = vision.find_lone_word(vision.ocr(img), STORE_INSTALL)
+            btn = self.open_store_result(found)
             if not btn:
                 self.m.shot("store-no-install")
                 raise Failure(f"no '{STORE_INSTALL}' button")
@@ -2529,6 +2510,57 @@ class Flow:
                 if canonical and box not in [item[1] for item in found]:
                     found.append((canonical, box))
         return found[0] if len(found) == 1 else None
+
+    def store_install_button(self, timeout):
+        """Watch the page's one big button: "Install", then (when done) "Open".
+        Found as the solid block of the theme's accent in the page header and
+        read by OCR on its own; full-screen OCR missed "Install" on a gold
+        button (run 40005591638). On the light theme its letters are dark on
+        dark green and cannot be read at all (run 40038619603,
+        0025-store-no-install.png), so an UNREADABLE block in the header counts
+        as the button, and what it does is watched in pixels: it goes away
+        while installing and comes back as Open."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(8)
+            img = self.m.screendump()
+            b = self.store_button(img)
+            if b:
+                self.log(f"the store's button reads {b[1]!r} at {b[0]}")
+                if not b[1] or label_is(b[1], STORE_INSTALL):
+                    return b[0]
+            btn = vision.find_lone_word(vision.ocr(img), STORE_INSTALL)
+            if btn:
+                return btn
+        return None
+
+    def open_store_result(self, found, wait=100):
+        """Press the result, and press again if it did not take.
+
+        A press on the row can come to nothing: run 42268221934 pressed VLC,
+        the row lit up, no get-details ever reached PackageKit, and the list
+        sat there for five minutes on an image that opened the same row at
+        the same place in its bitlocker journey. A person presses again, and
+        so does this, but only while the list is still what is on screen:
+        a press after it has gone would land on the program's page. Two hands,
+        as for Install; a double press is no third hand, the shell ignores
+        the second press on the same place within 500 ms (press.h)."""
+        at = vision.centre(found)
+        for press, how in enumerate(({}, dict(jiggle=True, hold=0.4), {}), 1):
+            self.m.click(*at, label=f"open result {STORE_RESULT}" +
+                         (f" (again, try {press}: {how or 'plain'})" if press > 1 else ""), **how)
+            btn = self.store_install_button(wait)
+            if btn:
+                if press > 1:       # green, but seen: a first press that keeps failing is a regression
+                    self.m.shot(f"store-row-took-{press}-presses")
+                    print(f"::warning::the store's {STORE_RESULT} row opened only on press {press}", flush=True)
+                return btn
+            again, _ = self.wait_store_result(STORE_RESULT, 1, every=0)
+            if not again:
+                self.log(f"no list to read after press {press}; waiting for the page, no more presses")
+                return self.store_install_button(wait * (3 - press))
+            at = vision.centre(again)
+        return None
 
     def click_current_store_open(self):
         """Reacquire Open twice immediately before one press; fail closed.

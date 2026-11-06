@@ -21,7 +21,7 @@
 
 Run from anywhere: python3 tools/e2e/selftest.py
 """
-import ast, inspect, json, os, re, shutil, subprocess, sys, tempfile
+import ast, contextlib, inspect, io, json, os, re, shutil, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "..", "..", "src", "aurbridge")
@@ -1257,6 +1257,73 @@ def test_store_result():
           "store result: an ambiguous early right border fails closed")
 
 
+def test_store_result_pressed_again():
+    """A press on a result that comes to nothing is pressed again, but never
+    once the list has gone: that press would land on the program's page."""
+    try:
+        import e2e
+    except ImportError:
+        return
+
+    class Hands:
+        def __init__(self):
+            self.clicks, self.shots = [], []
+
+        def click(self, x, y, label=None, **how):
+            self.clicks.append(((x, y), label, how))
+
+        def shot(self, label):
+            self.shots.append(label)
+
+    def run(buttons, rows):
+        """buttons: what each watch sees; rows: is the list there after each."""
+        f = object.__new__(e2e.AurFlow)
+        f.m, f.log = Hands(), lambda *_: None
+        buttons, rows, waits = iter(buttons), iter(rows), []
+
+        def watch(timeout):
+            waits.append(timeout)
+            return next(buttons)
+        f.store_install_button = watch
+        f.wait_store_result = lambda *_a, **_k: (next(rows), [])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            got = f.open_store_result(ROW, wait=100)
+        said.update(shots=f.m.shots, printed=out.getvalue())
+        return got, f.m.clicks, waits
+
+    said = {}
+    ROW, MOVED, BTN = (380, 250, 16, 16), (380, 400, 16, 16), (724, 188, 117, 38)
+    old_centre = e2e.vision.centre
+    e2e.vision.centre = lambda box: (box[0] + 8, box[1] + 8)
+    try:
+        got, clicks, waits = run([BTN], [])
+        check(got == BTN and len(clicks) == 1 and not clicks[0][2],
+              "store result: a press that takes is pressed once, plainly")
+        check(not said["shots"] and not said["printed"], "store result: and nothing is said about it")
+        got, clicks, waits = run([None, BTN], [ROW])
+        check(got == BTN and len(clicks) == 2 and clicks[1][2].get("jiggle"),
+              "store result: a press that came to nothing is pressed again, by a slower hand")
+        check("again" in clicks[1][1], "store result: the log says it took a second press")
+        check(said["printed"].startswith("::warning::") and "press 2" in said["printed"]
+              and said["shots"] == ["store-row-took-2-presses"],
+              "store result: a retry stays green but shows on the run's page, with its shot")
+        got, clicks, waits = run([None, None, BTN], [ROW, MOVED])
+        check(got == BTN and len(clicks) == 3 and clicks[2][0] == (388, 408),
+              "store result: the press goes where the row is now")
+        got, clicks, waits = run([None, None, None], [ROW, ROW, ROW])
+        check(got is None and len(clicks) == 3 and sum(waits) == 300,
+              "store result: three presses, five minutes, then it says so")
+        got, clicks, waits = run([None, BTN], [None])
+        check(got == BTN and len(clicks) == 1 and sum(waits) == 300,
+              "store result: the list gone, no second press, the rest of the wait kept")
+        got, clicks, waits = run([None, None, None], [ROW, None])
+        check(got is None and len(clicks) == 2 and sum(waits) == 300,
+              "store result: the same on the second press")
+    finally:
+        e2e.vision.centre = old_centre
+
+
 def test_store_open_click_boundary():
     """A details refresh cannot turn a previously seen Open into a stale click."""
     try:
@@ -1885,6 +1952,7 @@ test_generic_default_verdicts()
 test_store_frame()
 test_store_content()
 test_store_result()
+test_store_result_pressed_again()
 test_store_open_click_boundary()
 test_program_launch_proof()
 test_label_contrast()
