@@ -740,10 +740,11 @@ static void raise_app(shell_ctx *c, int app)
  * (a document with unsaved work can object; a second press stops one that
  * is stuck). It used to be swallowed: a close button that closed nothing.
  * A slot with no program behind it yet is the shell's to drop. */
+static void l_removed(shell_ctx *c, int i);
 static void ask_close(shell_ctx *c, int i)
 {
     if (i < 0 || i >= c->n_wins) return;
-    if (!c->wins[i].wid) { shell_close_win(c, i); return; }
+    if (!c->wins[i].wid) { l_removed(c, i); shell_close_win(c, i); return; }
     c->focus = i;
     c->want_close_win = 1;
 }

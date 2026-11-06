@@ -179,6 +179,7 @@ static uint32_t icon_tile(shell_icon ic)
     case ICON_FILES:   return 0x0E7490;   case ICON_DOC:     return 0x4F46B5;
     case ICON_MUSIC:   return 0xBE185D;   case ICON_TEXT:    return 0xA15C07;
     case ICON_ZIP:     return 0x7A5418;   case ICON_PRINTER: return 0x3F6212;
+    case ICON_CARDS:   return 0xB91C1C;
     case ICON_STORE:   return 0x0B5D4F;   case ICON_LIST:    return 0x27303D;
     case ICON_GEAR: case ICON_SETTINGS: return 0x52525B;
     default:           return 0x3F4A5A;
@@ -302,6 +303,19 @@ void shell_icon_draw(surface *s, shell_icon ic, float cx, float cy, float sz,
                                 2.f, 1.8f, u), paper, a);
         draw_rect(s, mk_box(cx, cy, -2.4f, 5.4f, 4.8f, 3.6f, u), paper, a);
         draw_rect(s, mk_box(cx, cy, -1.1f, 6.7f, 2.2f, 1.2f, u), ink, a);
+        break;
+
+    /* Card games. A card with a diamond on it, and one behind it. */
+    case ICON_CARDS:
+        draw_round_rect(s, mk_box(cx, cy, -11.f, -8.5f, 13.f, 18.5f, u),
+                        corners_all(2.f*u), ink, a);
+        draw_round_rect(s, mk_box(cx, cy, -6.5f, -12.f, 18.f, 24.f, u),
+                        corners_all(2.8f*u), paper, a);
+        draw_round_rect(s, mk_box(cx, cy, -5.f, -10.5f, 15.f, 21.f, u),
+                        corners_all(2.f*u), ink, a);
+        { float d[] = { GX(2.5f), GY(-6.5f), GX(7.5f), GY(0.f),
+                        GX(2.5f), GY(6.5f),  GX(-2.5f), GY(0.f) };
+          draw_poly(s, d, 4, paper, a); }
         break;
 
     /* Wi-Fi. Three arcs and a dot. */
@@ -1016,6 +1030,42 @@ void shell_close_win(shell_ctx *c, int win)
     for (int i = win; i + 1 < c->n_wins; i++) c->wins[i] = c->wins[i + 1];
     c->n_wins--;
     if (c->focus >= c->n_wins) c->focus = c->n_wins - 1;
+}
+
+void shell_win_gone(shell_ctx *c, const shell_layout *L, int i)
+{
+    if (!c || i < 0 || i >= c->n_wins) return;
+    /* Archetypes keep their own arrays indexed by the same slot
+     * number -- which workspace a window is on, whether it is
+     * maximised, the geometry to restore it to, its place in
+     * the stack. Shifting c->wins[] without telling them left
+     * every one of those naming a different window: quit a
+     * window and the one after it changes workspace, or claims
+     * to be maximised with a rectangle saved from somebody
+     * else. Their own close buttons always did this
+     * bookkeeping; the path a real application exits through
+     * did not, and that is the path that actually happens. */
+    if (L && L->removed) L->removed(c, i);
+    uint32_t parent = c->wins[i].dialog_of;
+    int was_front = (c->focus == i);
+    for (int j = i; j + 1 < c->n_wins; j++) c->wins[j] = c->wins[j + 1];
+    c->n_wins--;
+    /* A decrement, not a clamp. When the slot that went was
+     * below the focused one, everything above it moved down and
+     * the focus index silently named its neighbour -- so the
+     * window drawn as active and the window receiving keys were
+     * two different windows. */
+    if (c->focus > i) c->focus--;
+    else if (c->focus == i) c->focus = c->n_wins - 1;
+    if (c->focus >= c->n_wins) c->focus = c->n_wins - 1;
+    /* The question was answered: back to the program that asked it. */
+    if (was_front && parent) {
+        for (int j = 0; j < c->n_wins; j++) {
+            if (c->wins[j].wid != parent) continue;
+            if (L && L->present) L->present(c, j); else c->focus = j;
+            break;
+        }
+    }
 }
 
 /* ── the store, on every home screen ─────────────────────────────── */

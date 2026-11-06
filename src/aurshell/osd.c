@@ -27,6 +27,11 @@ void osd_say(const char *line)
     cur = OSD_SAID;
 }
 
+void osd_unsay(const char *line)
+{
+    if (cur == OSD_SAID && line && !strcmp(cur_line, line)) cur = OSD_NONE;
+}
+
 int  osd_visible(void) { return cur != OSD_NONE; }
 void osd_press(void)   { cur = OSD_NONE; }
 rect osd_box(void)     { return cur != OSD_NONE ? last_box : (rect){ 0, 0, 0, 0 }; }

@@ -35,6 +35,8 @@ typedef enum { OSD_NONE, OSD_VOLUME, OSD_BRIGHTNESS, OSD_MUTED,
 /* Show one. `value` is 0..100. */
 void osd_show(osd_kind kind, int value);
 void osd_say(const char *line);
+/* Stop saying `line`, if it is still what is being said. */
+void osd_unsay(const char *line);
 
 /* True while one is on screen. */
 int  osd_visible(void);

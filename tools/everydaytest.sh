@@ -152,6 +152,51 @@ grep -q 'dpkg-divert --local --rename --divert /usr/bin/xdg-open.distrib' build/
     && ok "build/forge diverts the package's xdg-open (an update does not take ours away)" \
     || bad "build/forge does not divert xdg-open"
 
+# ── every program on her list can be found ─────────────────────────
+# The shell finds a program on the PATH of aurshell.service and leaves a launcher
+# off her list, silently, when it can't. A shell or a chroot has a longer PATH,
+# so nothing else notices: Solitaire was installed and named and never shown.
+echo
+echo "programs are found on the desktop's own PATH (aurshell.service)"
+UNIT=rootfs/etc/systemd/system/aurshell.service
+runs() { # root  path: an absolute link means the image's own root, not this machine's
+    p=$1$2; n=0
+    while [ -L "$p" ] && [ "$n" -lt 8 ]; do
+        l=$(readlink "$p"); n=$((n+1))
+        case "$l" in /*) p=$1$l ;; *) p=$(dirname "$p")/$l ;; esac
+    done
+    [ -x "$p" ] && [ ! -d "$p" ]
+}
+findable() { # root  search-path  desktop-file
+    x=$(sed -n 's/^Exec=//p' "$3" | head -1 | cut -d' ' -f1)
+    case "$x" in
+      '') return 1 ;;
+      /*) runs "$1" "$x"; return ;;
+    esac
+    for d in $(printf '%s' "$2" | tr ':' ' '); do
+        runs "$1" "$d/$x" && return 0
+    done
+    return 1
+}
+SP=$(sed -n 's/^Environment=PATH=//p' "$UNIT" | tail -1)
+[ -n "$SP" ] && ok "the unit says its PATH: $SP" || bad "aurshell.service sets no PATH" "the desktop would get systemd's, which has no /usr/games"
+case ":$SP:" in
+  *:/usr/bin:*/usr/games:*) ok "/usr/games comes after /usr/bin, so a game can't stand in for a program" ;;
+  *) bad "/usr/games is missing, or comes before /usr/bin" "PATH=$SP" ;;
+esac
+# Ubuntu's real launcher, as the package ships it: Exec=sol, and the program in /usr/games.
+F="$T/fake"; mkdir -p "$F/usr/games" "$F/usr/bin"; : > "$F/usr/games/sol"; chmod 755 "$F/usr/games/sol"
+printf '[Desktop Entry]\nExec=sol\n' > "$T/sol.desktop"
+findable "$F" "$SP" "$T/sol.desktop" && ok "Exec=sol in /usr/games is found" || bad "Exec=sol in /usr/games is not found on $SP"
+findable "$F" /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "$T/sol.desktop" \
+    && bad "systemd's own PATH found it: this check proves nothing" || ok "...and is not on systemd's own PATH (what this check would miss without the unit's line)"
+mkdir -p "$F/etc/alternatives"; : > "$F/usr/bin/real"; chmod 755 "$F/usr/bin/real"
+ln -s /usr/bin/real "$F/etc/alternatives/viewer"; ln -s /etc/alternatives/viewer "$F/usr/bin/viewer"
+printf '[Desktop Entry]\nExec=viewer\n' > "$T/viewer.desktop"
+findable "$F" "$SP" "$T/viewer.desktop" && ok "a link through /etc/alternatives is followed inside the image" || bad "a link through /etc/alternatives is not followed"
+ln -s /usr/bin/nowhere "$F/usr/bin/gone"; printf '[Desktop Entry]\nExec=gone\n' > "$T/gone.desktop"
+findable "$F" "$SP" "$T/gone.desktop" && bad "a broken link counts as found" || ok "a broken link is not found, as the shell would not find it"
+
 # ── the built image ─────────────────────────────────────────────────
 echo
 LDSO="$RFS/lib64/ld-linux-x86-64.so.2"
@@ -182,6 +227,16 @@ if [ -f "$RFS/var/lib/flatpak/overrides/global" ]; then
     else bad "the image's /var/lib/flatpak/overrides/global is not what forge writes"; fi
 elif [ -x "$RFS/usr/bin/flatpak" ]; then bad "flatpak is installed but there is no global override (Electron programs would use X11)"
 fi
+# Every launcher forge renamed for her is one she is promised, and the unit in
+# this image is the one that decides whether she gets it.
+SP=$(sed -n 's/^Environment=PATH=//p' "$RFS/etc/systemd/system/aurshell.service" | tail -1)
+SP=${SP:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}     # with no line, systemd's own
+for f in "$RFS"/usr/local/share/applications/*.desktop; do
+    [ -f "$f" ] || continue
+    grep -q '^NoDisplay=true' "$f" && continue
+    if findable "$RFS" "$SP" "$f"; then ok "$(sed -n 's/^Name=//p' "$f" | head -1) can be found ($(basename "$f"))"
+    else bad "$(sed -n 's/^Name=//p' "$f" | head -1) would be left off her list" "$(basename "$f"): $(sed -n 's/^Exec=//p' "$f" | head -1) is not on $SP"; fi
+done
 [ -x "$RFS/usr/bin/Xwayland" ] && ok "Xwayland is in the image (for programs that have only X11)" || bad "Xwayland is not in the image"
 ls "$RFS"/usr/share/fonts/truetype/crosextra/Carlito* >/dev/null 2>&1 && ls "$RFS"/usr/share/fonts/truetype/crosextra/Caladea* >/dev/null 2>&1 \
     && ok "the fonts a Word file asks for are there (Carlito, Caladea)" || bad "Carlito / Caladea are not in the image"

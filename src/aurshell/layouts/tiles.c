@@ -29,6 +29,7 @@
 typedef struct {
     tween open;      /* 0 = the page of buttons, 1 = one thing, full screen */
     int   win;       /* the window being shown or shrinking, -1 for none    */
+    int win_gone;           /* the program on the screen went: see l_step */
     int   page;      /* which page of buttons                               */
     int   hot;       /* app index under the pointer / key cursor, -1 none   */
     int   home_hot;  /* pointer is over the Home control                    */
@@ -867,9 +868,24 @@ static void l_key(shell_ctx *c, int k)
     }
 }
 
+/* p->win is a slot number, and the slots above this one are about to move
+ * down. The one on the screen going is settled in l_step, once c->focus says
+ * what is in front now. */
+static void l_removed(shell_ctx *c, int win)
+{
+    tiles_priv *p = P(c);
+    if (win < p->win) p->win--;
+    else if (win == p->win) p->win_gone = 1;
+}
+
 static int l_step(shell_ctx *c, float dt)
 {
     tiles_priv *p = P(c);
+    if (p->win_gone) {
+        p->win_gone = 0;
+        p->win = c->focus;
+        if (p->win < 0) tween_set(&p->open, 0.f);
+    }
     int moving = tween_step(&p->open, dt);
     if (!moving && p->open.value <= 0.001f && p->win >= 0) {
         p->win = -1;
@@ -968,6 +984,7 @@ const shell_layout layout_tiles = {
     .key = l_key,
     .step = l_step,
     .present = l_present,
+    .removed = l_removed,
     .fini = l_fini,
     .targets = l_targets,
 };

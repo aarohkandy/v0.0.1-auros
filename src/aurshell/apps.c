@@ -441,6 +441,7 @@ static shell_icon icon_for(const entry *e)
      || has_cat(e, "AudioVideo") || has_cat(e, "Video"))  return ICON_MUSIC;
     if (has_cat(e, "Documentation"))                      return ICON_HELP;
     if (has_cat(e, "Network"))                            return ICON_GLOBE;
+    if (has_cat(e, "CardGame"))                           return ICON_CARDS;
     return ICON_WINDOW;
 }
 

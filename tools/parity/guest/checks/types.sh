@@ -43,9 +43,25 @@ types web       "Internet" x-scheme-handler/http x-scheme-handler/https text/htm
 # desktop hands back to it (a chooser, a loop, nothing) has not been tried: so it is a note, not a pass.
 note "mailto: is registered to \"$(nameof "$(gio mime x-scheme-handler/mailto 2>&1 | sed -n 's/^Default application for.*: //p' | head -1)")\"; what Firefox does with it next is untested"
 
-# Solitaire is on her list of programs, under that name
-if [ "$(nameof sol.desktop)" = Solitaire ] && command -v sol >/dev/null 2>&1; then
-    result types.solitaire pass "Solitaire is installed and is called that"
+# Solitaire is on her list of programs, under that name, and it opens. This runs in the desktop's own session, so
+# `command -v` asks what the shell asks: it leaves a launcher off her list when it cannot find the program (apps.c).
+name=$(nameof sol.desktop)
+if [ "$name" != Solitaire ]; then
+    result types.solitaire fail "no Solitaire among her programs (sol.desktop says \"$name\")"
+elif ! command -v sol >/dev/null 2>&1; then
+    result types.solitaire fail "sol.desktop is there, but sol is not on the desktop's PATH, so it is left off her list ($PATH)"
 else
-    result types.solitaire fail "no Solitaire among her programs (sol.desktop says \"$(nameof sol.desktop)\")"
+    log=/var/lib/auros-parity/sol.log
+    : > "$log"
+    snap types-solitaire-before
+    WAYLAND_DEBUG=1 setsid sol > "$log" 2>&1 &
+    if wait_for 60 grep -q 'xdg_surface[@#][0-9]*.get_toplevel' "$log"; then
+        sleep 8
+        snap types-solitaire
+        act changed types-solitaire-before types-solitaire types.solitaire-visible 260 130 1020 690 1.5
+        result types.solitaire pass "Solitaire is on her list and opens a window"
+    else
+        result types.solitaire fail "sol started but no window in 60 s: $(grep -ai 'error\|critical\|cannot\|failed' "$log" | head -2 | tr '\n' ' ' | cut -c1-200)"
+    fi
+    pkill -x sol 2>/dev/null
 fi

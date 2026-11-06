@@ -46,7 +46,7 @@ typedef enum {
      * with a folded corner (Documents), a printer, a box with a zip,
      * and a gear (Settings). The band's own: Wi-Fi, sound, bigger and
      * smaller text, turn off, close, back, forward, and the check. */
-    ICON_DOC, ICON_PRINTER, ICON_ZIP, ICON_GEAR,
+    ICON_DOC, ICON_PRINTER, ICON_ZIP, ICON_GEAR, ICON_CARDS,
     ICON_WIFI, ICON_SPEAKER, ICON_BIGGER, ICON_SMALLER, ICON_POWER,
     ICON_CLOSE, ICON_BACK, ICON_FORWARD, ICON_CHECK,
     ICON_N
@@ -417,7 +417,8 @@ typedef struct {
      * above it will shift down by one. An archetype that keeps its own
      * arrays indexed by slot number must shift them here -- which
      * workspace each window is on, which are maximised, the stacking
-     * order. Optional, and only for archetypes that keep such arrays.
+     * order, or a row that has to settle again once it is gone.
+     * Optional, and only for archetypes that keep such state.
      *
      * Called for the path a real application exits through, which is
      * the one that actually happens; an archetype's own close button
@@ -579,6 +580,9 @@ int  shell_launch(shell_ctx *c, int app);
 
 /* Ask a window to close, the way its own title bar button would. */
 void shell_close_win(shell_ctx *c, int win);
+/* A real window's program has gone: take it out of c->wins, tell the
+ * archetype, and leave c->focus on what is in front now (-1: Home). */
+void shell_win_gone(shell_ctx *c, const shell_layout *L, int win);
 
 /* Registry. Each layout lives in its own translation unit and exposes
  * exactly one of these, so six of them can be written independently

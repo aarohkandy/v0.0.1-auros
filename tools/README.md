@@ -525,6 +525,9 @@ ordinary English verb. Flagging workbench's "swap pane" would have
 taught people to ignore the check, which is the only way a check like
 this really dies.
 
+`closetest` asks the question after it: a program closes, and what is she looking at? Every look, through
+`shell_win_gone()`, the path a real program takes on its way out.
+
 `launchtest` answers the first question a desktop has to answer: can she
 start a program by clicking on it? This product answered "no" for its
 entire life and nothing noticed.

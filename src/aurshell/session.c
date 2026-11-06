@@ -89,7 +89,6 @@ _Static_assert((int)WREQ_MOVE == (int)AURWL_REQ_MOVE && (int)WREQ_MAXIMIZE == (i
 void session_sync(shell_ctx *c, const shell_layout *L)
 {
     void (*present)(shell_ctx *, int) = L ? L->present : NULL;
-    void (*removed)(shell_ctx *, int) = L ? L->removed : NULL;
     if (!c->wl) return;
     aurwl *wl = c->wl;
 
@@ -209,36 +208,7 @@ void session_sync(shell_ctx *c, const shell_layout *L)
     for (int i = c->n_wins - 1; i >= 0; i--) {
         win_entry *e = &c->wins[i];
         if (e->wid && !seen[i]) {
-            /* The client went away.
-             *
-             * Archetypes keep their own arrays indexed by the same slot
-             * number -- which workspace a window is on, whether it is
-             * maximised, the geometry to restore it to, its place in
-             * the stack. Shifting c->wins[] without telling them left
-             * every one of those naming a different window: quit a
-             * window and the one after it changes workspace, or claims
-             * to be maximised with a rectangle saved from somebody
-             * else. Their own close buttons always did this
-             * bookkeeping; the path a real application exits through
-             * did not, and that is the path that actually happens. */
-            if (removed) removed(c, i);
-            uint32_t parent = e->dialog_of;
-            int was_front = (c->focus == i);
-            for (int j = i; j + 1 < c->n_wins; j++) c->wins[j] = c->wins[j + 1];
-            c->n_wins--;
-            /* A decrement, not a clamp. When the slot that went was
-             * below the focused one, everything above it moved down and
-             * the focus index silently named its neighbour -- so the
-             * window drawn as active and the window receiving keys were
-             * two different windows. */
-            if (c->focus > i) c->focus--;
-            else if (c->focus == i) c->focus = c->n_wins - 1;
-            if (c->focus >= c->n_wins) c->focus = c->n_wins - 1;
-            /* The question was answered: back to the program that asked it. */
-            if (was_front && parent) {
-                int pj = slot_for_wid(c, parent);
-                if (pj >= 0) { if (present) present(c, pj); else c->focus = pj; }
-            }
+            shell_win_gone(c, L, i);       /* the client went away */
             continue;
         }
         if (e->starting) {

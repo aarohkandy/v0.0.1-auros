@@ -1222,6 +1222,9 @@ int main(int argc, char **argv)
      * inside this window stops it outright. */
     #define CLOSE_INSIST_MS 6000
     uint32_t close_asked_wid = 0, close_asked_ms = 0;
+    static const char ASKING_TO_CLOSE[] =
+        "Asking it to close. If it asks you something, answer it. "
+        "If nothing happens, press Close this again.";
     /* THE SCREEN GOES DARK WHEN NOBODY IS THERE.
      *
      * `screen_dark` is what the panel is doing, not what we asked it
@@ -1575,6 +1578,12 @@ int main(int argc, char **argv)
             aurwl_reap(c.wl);
             int before = c.n_wins;
             session_sync(&c, L);
+            /* It closed: "press Close this again" now names a button that is gone. */
+            if (close_asked_wid && !session_win(&c, close_asked_wid)) {
+                osd_unsay(ASKING_TO_CLOSE);
+                close_asked_wid = 0;
+                dirty = 1;
+            }
             if (!SHELL_PANEL_OPEN(&c)) session_focus_follow(&c);    /* keys go to the window she is looking at */
             uint32_t seq = aurwl_damage_seq(c.wl);
             if (seq != last_damage || c.n_wins != before) { last_damage = seq; dirty = 1; }
@@ -1666,24 +1675,19 @@ int main(int argc, char **argv)
                          * would say that a second press is what stops it. But a program
                          * still here may be asking whether to save, and the second press
                          * loses that work: so answer first, press only if it says nothing. */
-                        osd_say("Asking it to close. If it asks you something, answer it. "
-                                "If nothing happens, press Close this again.");
+                        osd_say(ASKING_TO_CLOSE);
                     }
                 } else {
                     /* The compositor has no such window any more, so
-                     * the slot is the shell's to remove -- and
-                     * shell_close_win() refuses a slot that still
-                     * carries a wid, so the wid is cleared first.
-                     * Without that this arm was unreachable code
-                     * wearing the shape of a handler. */
-                    c.wins[w].wid = 0;
-                    shell_close_win(&c, w);
+                     * the slot is the shell's to remove. */
+                    shell_win_gone(&c, L, w);
                 }
             } else {
                 /* A slot with nothing behind it yet -- an application
                  * that is still starting, or one that failed to. That
-                 * one is the shell's own to remove. */
-                shell_close_win(&c, w);
+                 * one is the shell's own to remove, and the look has
+                 * to hear about it like any other window going. */
+                shell_win_gone(&c, L, w);
             }
             dirty = 1;
         }

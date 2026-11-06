@@ -37,7 +37,7 @@ static void ok(const char *what, int good)
 static const char *NAME[ICON_N] = {
     "globe", "mail", "photos", "files", "settings", "help", "window", "plus",
     "notes", "music", "terminal", "calculator", "store", "list", "wish",
-    "documents", "printer", "zip", "gear", "wifi", "sound", "bigger", "smaller",
+    "documents", "printer", "zip", "gear", "cards", "wifi", "sound", "bigger", "smaller",
     "power", "close", "back", "forward", "check",
 };
 
@@ -141,6 +141,7 @@ int main(int argc, char **argv)
     entry(dir, "system-config-printer", "Printers", "System;Settings;HardwareSettings;Printing;GTK;");
     entry(dir, "xarchiver", "Zip files", "GTK;Archiving;Utility;Compression;");
     entry(dir, "org.gnome.Software", "Get more programs", "GNOME;GTK;System;PackageManager;");
+    entry(dir, "sol", "Solitaire", "GNOME;GTK;Game;CardGame;");
     setenv("AUROS_APP_DIRS", dir, 1);
 
     shell_ctx c;

@@ -28,6 +28,7 @@
 
 typedef struct {
     tween slide;
+    int settle;             /* a window went: the row moves to what is in front */
     int   hover_tile;
     /* "All my programs" is showing in the Home card instead of Home.
      * Not a seventh panel: it is Home's own second page, it belongs to
@@ -627,7 +628,17 @@ static void l_key(shell_ctx *c, int k)
     }
 }
 
-static int  l_step(shell_ctx *c, float dt) { return tween_step(&P(c)->slide, dt); }
+/* Called before the window leaves c->wins, so the row can't move yet: l_step does it.
+ * Without this the row stays where the closed card was, and when that was the last
+ * one she is left looking at an empty screen with Home at the edge. */
+static void l_removed(shell_ctx *c, int win) { (void)win; P(c)->settle = 1; }
+
+static int l_step(shell_ctx *c, float dt)
+{
+    rail_priv *p = P(c);
+    if (p->settle) { p->settle = 0; focus_card(c, c->focus + 1, 0.30f); }
+    return tween_step(&p->slide, dt);
+}
 
 /* In a row of cards, "show me this window" means scroll the row until
  * that card is the one in the middle. Setting c->focus alone would move
@@ -688,5 +699,6 @@ const shell_layout layout_rail = {
     .step = l_step,
     .fini = l_fini,
     .present = l_present,
+    .removed = l_removed,
     .targets = l_targets,
 };
