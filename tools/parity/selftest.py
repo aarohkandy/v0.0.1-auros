@@ -85,12 +85,13 @@ print("a healthy night against %s" % os.path.relpath(gaps, ROOT))
 shipped = open(gaps).read()
 rc = night(shipped)
 check("every check passes: the run exits 0 (no plain gap that passes is left in known-gaps.txt)", rc == 0, "exit code %r" % rc)
-pending = [ln.split()[0][1:] for ln in shipped.splitlines() if ln.startswith("~")]
-check("known-gaps.txt has pending lines (the newest existing image predates this branch)", len(pending) > 0)
-check("an older image: the checks added here fail, the run still exits 0", night(shipped, pending) == 0)
+# The file has no ~pending lines between changes, so the rule is checked with lines of its own.
+older = "".join("~%s  x\n" % n for n in ("types.solitaire", "print.drivers"))
+pending = [ln.split()[0][1:] for ln in older.splitlines()]
+check("an older image: the checks added here fail, the run still exits 0", night(older, pending) == 0)
 check("  ... but exits 1 with no pending lines (red proof: they are what keep it green)",
       night("", pending) == 1)
-check("  ... and exits 1 when a check that is not listed fails too", night(shipped, pending + ["print.discover"]) == 1)
+check("  ... and exits 1 when a check that is not listed fails too", night(older, pending + ["print.discover"]) == 1)
 check("  ... and a plain gap that passes is still red", night("types.pdf  x\n") == 1)
 check("  ... and a pending line that passes is not", night("~types.pdf  x\n") == 0)
 check("the types check is one of the default checks", "types" in run.ALL)

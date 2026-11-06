@@ -6,15 +6,3 @@
 # Pending (~NAME): fails while the image under test is older than the change that fixes it, so the nightly (which tests the
 # newest EXISTING build) stays green until the build carrying that change has been made. May fail (GAP) or pass without
 # failing the run. After the first nightly on a build that has the change, delete these lines: from then on a failure is red.
-~print.drivers  needs printer-driver-escpr and printer-driver-brlaser (profiles/desktop.profile): in no image built before wave/gm-everyday
-~types.solitaire  needs /usr/games on the PATH of aurshell.service: in no image built before that line
-~types.music  needs the second update-desktop-database of build/forge (the renamed copies in /usr/local): .wmv, .wma, .aac, .flv answer nothing without it
-~types.web  needs the same index: x-scheme-handler/mailto answers nothing without it
-~types.pictures  new check, never yet run on an image
-~types.pdf  new check, never yet run on an image
-~types.letters  new check, never yet run on an image
-~types.tables  new check, never yet run on an image
-~types.notes  new check, never yet run on an image
-~types.zip  new check, never yet run on an image
-~types.installer  new check, never yet run on an image
-~types.folders  new check, never yet run on an image
