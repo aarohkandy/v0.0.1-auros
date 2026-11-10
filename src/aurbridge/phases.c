@@ -164,11 +164,11 @@ static int phase_inspect(const ab_choice *c, pf_report *r, ab_machine *m,
         snprintf(why, n, "this computer cannot be converted.");
         return -1;
     }
-    if (r->system_disk < 0 || r->system_disk >= r->n_disks) {
+    const pf_disk *d = pf_system_disk(r);
+    if (!d) {
         snprintf(why, n, "AurOS could not tell which drive Windows is on.");
         return -1;
     }
-    const pf_disk *d = &r->disks[r->system_disk];
     m->disk_index = d->index;
     snprintf(m->disk_serial, sizeof m->disk_serial, "%s", d->serial);
     snprintf(m->disk_model,  sizeof m->disk_model,  "%s", d->model);

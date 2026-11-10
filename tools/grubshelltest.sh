@@ -161,6 +161,31 @@ out=$(python3 -I "$T/scan.py" --serial "$R/boot/grub/grub.cfg") \
   || ok "the debugging switch (/etc/auros/grub-serial) puts one in, and the scan sees it"
 rm -f "$R/etc/auros/grub-serial"
 
+# THE STUBS A PC WITHOUT AUROS'S PARTITION STILL RUNS (docs/safety S-25). Both
+# layouts leave AUROS-BOOT, an ESP-typed partition Disk Management will not
+# delete, so firmware keeps starting its shim and grub after AUROS-ROOT is gone.
+# A stub that ends in a failed configfile leaves her at a bare "grub>" on every
+# start; ending in `exit` hands the PC back to the firmware, which starts the
+# next entry. build/mkimage's is tools/windowsboottest.sh case F; the encrypted
+# layout's is written by lockctl, rendered here.
+SE="$T/stubs"; mkdir -p "$SE/EFI/AurOS" "$SE/EFI/BOOT" "$SE/EFI/ubuntu"
+for d in AurOS BOOT ubuntu; do : > "$SE/EFI/$d/grub.cfg"; done
+sed -n '/^stubs_write() {/,/^}/p' rootfs/usr/lib/auros/lock/lockctl > "$T/stubs_write.sh"
+if [ -s "$T/stubs_write.sh" ] && ESP="$SE" sh -c '. "$1"; stubs_write 1111-2222 aaaa-bbbb' sh "$T/stubs_write.sh" 2>/dev/null; then
+    for d in AurOS BOOT ubuntu; do
+        f="$SE/EFI/$d/grub.cfg"
+        last=$(grep -v '^[[:space:]]*$' "$f" | tail -1)
+        if [ "$last" = exit ] && grep -q 'not on this computer any more' "$f"; then
+            ok "lockctl: EFI/$d/grub.cfg ends by handing back to the firmware"
+        else
+            bad "lockctl: EFI/$d/grub.cfg ends by handing back to the firmware" \
+                "last line is \"$last\"; a failed search leaves a bare grub> prompt"
+        fi
+    done
+else
+    bad "lockctl: stubs_write renders" "could not extract or run it (moved? then this test must follow it)"
+fi
+
 # What mkimage puts in /etc/default/grub is what ships (it overwrites
 # Ubuntu's): read it where it is written. With GRUB_DISABLE_RECOVERY true,
 # Ubuntu's own grub-mkconfig -- which nothing on AurOS runs, update-grub

@@ -127,7 +127,7 @@ putback-trusts-report)
 no-guid-check)
     sub src/aurbridge/main.c 'if (_stricmp(g, want_guid) != 0) {' 'if (0) {' ;;
 no-sysdisk-check)
-    sub src/aurbridge/main.c 'r.disks[r.system_disk].index == disk)' 'r.disks[r.system_disk].index == disk && 0)' ;;
+    sub src/aurbridge/main.c 'r.system_disk == disk)' 'r.system_disk == disk && 0)' ;;
 file-changed)
     # applied by fastpath.yml between the engine's run and the independent
     # check (it needs the throwaway disk); nothing to change in the source.

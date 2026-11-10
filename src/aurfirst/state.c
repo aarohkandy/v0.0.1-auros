@@ -535,6 +535,43 @@ int af_windows(char *why, size_t n)
     return -1;
 }
 
+/* BootOrder WRITTEN, READ BACK, AND PUT BACK AS IT WAS if the firmware did not keep it. The write
+ * landed or it did not; either way the machine must not be left with a start-up order nobody
+ * chose while the screen says it has. `old` is what was there (have > 0), and if there was none
+ * there is nothing to restore: deleting it is what "none" means. Both `promote` and `af_decline`
+ * go through here: a "No, go back to Windows" that the firmware silently ignores is the same
+ * lie as a "Yes" it ignores. */
+static int put_order_checked(const uint16_t *nw, int k, const uint16_t *old, int have,
+                             char *why, size_t n)
+{
+    uint8_t buf[MAX_BOOTS * 2];
+    for (int i = 0; i < k; i++) {
+        buf[i * 2]     = (uint8_t)(nw[i] & 0xFF);
+        buf[i * 2 + 1] = (uint8_t)(nw[i] >> 8);
+    }
+    if (af_var_put("BootOrder", buf, (size_t)k * 2, why, n) != 0) return -1;
+
+    uint8_t back[MAX_BOOTS * 2];
+    int got = af_var_get("BootOrder", back, sizeof back);
+    if (got != k * 2 || memcmp(back, buf, (size_t)k * 2) != 0) {
+        char ignored[200];
+        if (have > 0) {
+            uint8_t was[MAX_BOOTS * 2];
+            for (int i = 0; i < have; i++) {
+                was[i * 2]     = (uint8_t)(old[i] & 0xFF);
+                was[i * 2 + 1] = (uint8_t)(old[i] >> 8);
+            }
+            af_var_put("BootOrder", was, (size_t)have * 2, ignored, sizeof ignored);
+        } else {
+            af_var_del("BootOrder", ignored, sizeof ignored);
+        }
+        snprintf(why, n, "this computer's firmware did not keep the new "
+                         "start-up order, so it has been put back as it was");
+        return -1;
+    }
+    return 0;
+}
+
 /* AurOS FIRST IN BootOrder, everything else kept, read back, and put
  * back as it was if the firmware did not keep it. The one place that
  * writes the order for "AurOS is what this computer starts": `confirm`
@@ -608,41 +645,7 @@ static int promote(const af_state *s, char *why, size_t n)
             }
     }
 
-    uint8_t buf[MAX_BOOTS * 2];
-    for (int i = 0; i < k; i++) {
-        buf[i * 2]     = (uint8_t)(nw[i] & 0xFF);
-        buf[i * 2 + 1] = (uint8_t)(nw[i] >> 8);
-    }
-    if (af_var_put("BootOrder", buf, (size_t)k * 2, why, n) != 0) return -1;
-
-    /* READ IT BACK. Every write in the installer is read back and
-     * compared; this one decides what the computer does when it is
-     * switched on, so it gets the same treatment. */
-    uint8_t back[MAX_BOOTS * 2];
-    int got = af_var_get("BootOrder", back, sizeof back);
-    if (got != k * 2 || memcmp(back, buf, (size_t)k * 2) != 0) {
-        /* PUT IT BACK. The write landed or it did not; either way the
-         * machine must not be left with a start-up order nobody chose
-         * while the screen says nothing has been changed. The old one
-         * is still in `order`, and if there was none there is nothing
-         * to restore -- deleting it is what "none" means. */
-        char ignored[200];
-        if (have > 0) {
-            uint8_t was[MAX_BOOTS * 2];
-            for (int i = 0; i < have; i++) {
-                was[i * 2]     = (uint8_t)(order[i] & 0xFF);
-                was[i * 2 + 1] = (uint8_t)(order[i] >> 8);
-            }
-            af_var_put("BootOrder", was, (size_t)have * 2, ignored,
-                       sizeof ignored);
-        } else {
-            af_var_del("BootOrder", ignored, sizeof ignored);
-        }
-        snprintf(why, n, "this computer's firmware did not keep the new "
-                         "start-up order, so it has been put back as it was");
-        return -1;
-    }
-    return 0;
+    return put_order_checked(nw, k, order, have, why, n);
 }
 
 /* ── the one function in this tree that writes BootOrder ───────────── */
@@ -726,14 +729,10 @@ int af_decline(const af_state *s, char *why, size_t n)
                              "order, so it cannot promise Windows is next.");
             return -1;
         }
-        uint8_t buf[MAX_BOOTS * 2];
+        uint16_t nw[MAX_BOOTS];
         int k = 0;
         for (int i = 0; i < have; i++)
-            if (order[i] != s->entry) {
-                buf[k * 2]     = (uint8_t)(order[i] & 0xFF);
-                buf[k * 2 + 1] = (uint8_t)(order[i] >> 8);
-                k++;
-            }
+            if (order[i] != s->entry) nw[k++] = order[i];
         if (k == 0) {
             /* Ours is the only thing in the menu. Demoting it would
              * leave an empty BootOrder, which is a machine that starts
@@ -742,10 +741,8 @@ int af_decline(const af_state *s, char *why, size_t n)
                              "start-up menu, so it cannot put Windows first.");
             return -1;
         }
-        buf[k * 2]     = (uint8_t)(s->entry & 0xFF);
-        buf[k * 2 + 1] = (uint8_t)(s->entry >> 8);
-        k++;
-        if (af_var_put("BootOrder", buf, (size_t)k * 2, why, n) != 0) return -1;
+        nw[k++] = s->entry;
+        if (put_order_checked(nw, k, order, have, why, n) != 0) return -1;
     }
 
     if (stamp(AF_DECLINED, why, n) != 0) return -1;

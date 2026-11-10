@@ -107,6 +107,38 @@ freerun free56 56
 grep -q 'verdict=armed' "$T/free56/out" && ok "56 MiB free: enough, and it arms" \
     || bad "56 MiB free: enough, and it arms" "$(cat "$T/free56/out")" "$(tail -3 "$T/free56/err")"
 
+# WHICH DISK IS WINDOWS' WHEN A DISK NUMBER IS MISSING. preflight's system_disk
+# is a PhysicalDrive NUMBER; a drive that will not open is skipped, so the
+# number and the position in the list of disks part. The engine used to index
+# the list with the number, which on a PC with disks 0, 2 and 3 took Windows to
+# be disk 3: another disk's serial, size and start-up partition went into the
+# plan, and an identical-looking second disk (a factory clone, a backup) would
+# have been the one prepared, and later shrunk. Here: disks 0 (blank), 2
+# (Windows) and 3 (a byte-for-byte clone of it, under another serial). It must
+# arm for disk 2, naming disk 2's serial.
+gaprun() {
+    D2="$T/gap2.img"; D3="$T/gap3.img"; D0="$T/gap0.img"
+    rm -f "$D0" "$D2" "$D3"; truncate -s 1G "$D0"; truncate -s 3G "$D2"
+    sgdisk -n 1:2048:206847 -t 1:ef00 -n 2:206848:2303999 -t 2:0700 \
+           -n 3:5500000:6291422 -t 3:2700 "$D2" >/dev/null
+    printf 'NTFS    ' | dd of="$D2" bs=1 seek=$((206848*512+3)) conv=notrunc status=none
+    cp "$D2" "$D3"
+    mkdir -p "$T/gap/win/AurOS" "$T/gap/sim/esp"
+    I="$T/gap/win/AurOS/auros-desktop.img"
+    truncate -s 64M "$I"; sgdisk -n 1:2048:+16M -t 1:ef00 -n 2:0:0 -t 2:8304 "$I" >/dev/null
+    : > "$T/gap/sim/efivars.txt"
+    { printf '0\t%s\t%s\t512\tBLANKDISK\tQEMU\t0\n' "$D0" "$(stat -c%s "$D0" 2>/dev/null || stat -f%z "$D0")"
+      printf '2\t%s\t%s\t512\tREALWINDOWS\tQEMU\t0\n' "$D2" "$(stat -c%s "$D2" 2>/dev/null || stat -f%z "$D2")"
+      printf '3\t%s\t%s\t512\tCLONEOFWINDOWS\tQEMU\t0\n' "$D3" "$(stat -c%s "$D3" 2>/dev/null || stat -f%z "$D3")"
+    } > "$T/gap/sim/disks.txt"
+    out/aurbridge-sim "$T/gap/sim" desktop none "$I" "$T/kern" "$T/initrd" \
+        > "$T/gap/out" 2> "$T/gap/err"
+}
+gaprun
+grep -q 'verdict=armed disk=2 serial=REALWINDOWS' "$T/gap/out" \
+    && ok "disks 0, 2 and 3: Windows is disk 2 (not the third entry in the list)" \
+    || bad "disks 0, 2 and 3: Windows is disk 2 (not the third entry in the list)" "$(cat "$T/gap/out")" "$(tail -3 "$T/gap/err")"
+
 echo
 if [ "$fail" -gt 0 ]; then echo "$fail of $checked wrong."; exit 1; fi
 echo "$checked checks: two EFI partitions are refused before anything is written, and so is too little room."

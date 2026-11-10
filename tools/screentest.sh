@@ -50,6 +50,16 @@ while IFS= read -r s; do
       && ok "install.c says: $s" || bad "install.c says: $s" "reworded or gone"
 done < "$T/starts"
 
+# THE PUT-BACK ENDINGS TELL HER ABOUT THE DRIVE CHECK. Growing C: back is done
+# with ntfsresize, which leaves the volume marked so that Windows checks the
+# drive at its next start (src/aurstage/shrink.h). That is a black screen of
+# percentages for minutes or hours, and a held power button is what a person
+# does to a screen like that. Both endings (the restart and the switch-off) say
+# it before they act.
+n=$(grep -cF 'stage_say("Windows may check its drive when it starts, and that can");' src/aurstage/install.c)
+[ "$n" = 2 ] && ok "install.c warns, in both put-back endings, that Windows may check its drive" \
+             || bad "install.c warns, in both put-back endings, that Windows may check its drive" "found $n of 2"
+
 say() { printf 'aurstage: %s\n' "$@"; }
 tm() { printf 'aurstage-time %s\n' "$1"; }
 part() {
@@ -180,8 +190,8 @@ S=$( { say "restoring /dev/vda" "" "aurstage-report v1 verdict=restored record=d
         "Windows is back. This computer will switch itself off;"; } | st restore)
 [ "$(fld "$S" stopped)" = 0 ] && [ "$(fld "$S" finished)" = 1 ] \
     && ok "a restore that worked: finished, not stopped" || bad "a restore that worked: finished, not stopped" "$S"
-case "$S" in *"para=The screen goes black, then Windows starts. About two minutes."*) ok "...and says what the black screen is" ;;
-    *) bad "...and says what the black screen is" "$S" ;; esac
+case "$S" in *"para=The screen goes black, then Windows starts."*"para=Windows may check its drive first. That can take a long time. Please let it finish."*) ok "...and says what the black screen is, and that Windows may check its drive" ;;
+    *) bad "...and says what the black screen is, and that Windows may check its drive" "$S" ;; esac
 
 S=$( say "AurOS staging environment" "this is the one restart; nothing has been changed yet" \
          "5 drivers loaded" "this machine has 3 disks" | st install)

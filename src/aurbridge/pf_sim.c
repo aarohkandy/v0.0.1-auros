@@ -120,13 +120,13 @@ void pf_run(pf_report *r)
              * is nothing to ask, so the first one wins and the machine
              * description is written to make that true. */
             if (!d[i].removable && r->system_volume < 0) {
-                r->system_disk   = r->n_disks;
+                r->system_disk   = d[i].index;     /* a number, as on Windows */
                 r->system_volume = r->n_volumes;
                 r->system_offset = first * ss;
             }
             r->n_volumes++;
         }
-        if (pd->esp_length && r->system_disk == r->n_disks) {
+        if (pd->esp_length && r->system_disk == d[i].index) {
             r->esp_found = 1;
             r->esp_size_bytes = pd->esp_length;
         }

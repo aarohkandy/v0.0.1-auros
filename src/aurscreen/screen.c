@@ -305,8 +305,9 @@ static void compose(state *s)
                      NULL);
         else if (s->finished)
             set_para(s, "Windows has been put back and checked.",
-                     "The screen goes black, then Windows starts. About two minutes.",
-                     "If Windows does not start, ask someone to help you.", NULL);
+                     "The screen goes black, then Windows starts.",
+                     "Windows may check its drive first. That can take a long time. Please let it finish.",
+                     "If Windows does not start, ask someone to help you.");
         else
             set_para(s, "Putting Windows back.",
                      "Please don't turn this computer off.", NULL, NULL);

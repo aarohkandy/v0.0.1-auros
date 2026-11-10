@@ -125,7 +125,9 @@ typedef struct {
     pf_volume volumes[PF_MAX_VOLUMES];
     int       n_volumes;
 
-    int       system_disk;          /* index into disks[]              */
+    int       system_disk;          /* the PhysicalDrive NUMBER (pf_disk.index), not a
+                                     * position in disks[]: a drive that would not open
+                                     * is skipped, so the two differ. pf_system_disk(). */
     int       system_volume;        /* index into volumes[], -1 none   */
     uint64_t  system_offset;        /* byte offset of C: on that disk  */
 
@@ -202,6 +204,17 @@ void pf_run(pf_report *r);
 
 /* PF_OK only when there is not a single BLOCK. Warnings are the
  * wizard's problem, blocks are non-negotiable. */
+/* THE SYSTEM DISK'S ENTRY, found by its number. disks[system_disk] is wrong as soon
+ * as one PhysicalDrive number was skipped (a drive that would not open), and wrong
+ * means ANOTHER DISK's serial, size and start-up partition going into the plan.
+ * NULL when there is no system disk or it was not read. */
+static inline const pf_disk *pf_system_disk(const pf_report *r)
+{
+    if (!r || r->system_disk < 0) return 0;
+    for (int i = 0; i < r->n_disks; i++)
+        if (r->disks[i].index == r->system_disk) return &r->disks[i];
+    return 0;
+}
 int  pf_is_go(const pf_report *r);
 
 /* Exercises the decision logic that does not need a real machine —

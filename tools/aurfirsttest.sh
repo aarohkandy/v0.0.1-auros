@@ -1067,6 +1067,55 @@ esac
   || bad "...and takes the menu's choice back, and does not restart" \
          "next_entry='$(next_entry)' rebooted=$([ -f "$TMP/rebooted" ] && echo yes || echo no)"
 
+# ── a firmware that says yes to a BootOrder write and keeps the old one ─
+# The same silent no that promote already answers (read back, put back),
+# now for "No, go back to Windows": if the demotion is not read back, she
+# is told Windows starts next and the firmware starts AurOS. The "firmware"
+# is a preload that sends the write to /dev/null; the read still sees what
+# was there.
+echo
+echo "  a firmware that does not keep the new start-up order"
+cat > "$TMP/dropw.c" <<'EOC'
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <stdarg.h>
+#include <string.h>
+int open(const char *p, int fl, ...)
+{
+    static int (*real)(const char *, int, ...);
+    if (!real) real = (int (*)(const char *, int, ...))dlsym(RTLD_NEXT, "open");
+    mode_t m = 0;
+    if (fl & O_CREAT) { va_list a; va_start(a, fl); m = va_arg(a, mode_t); va_end(a); }
+    if (strstr(p, "BootOrder-") && (fl & O_WRONLY)) return real("/dev/null", O_WRONLY);
+    return real(p, fl, m);
+}
+EOC
+if gcc -shared -fPIC -o "$TMP/dropw.so" "$TMP/dropw.c" -ldl 2>"$TMP/dropw.log"; then
+    fresh
+    plant 0000 "Windows Boot Manager"
+    plant 0002 "AurOS"
+    order 0002 0000
+    LD_PRELOAD="$TMP/dropw.so" "$AF" decline >"$TMP/dec.out" 2>&1; rc=$?
+    [ "$rc" != 0 ] && [ ! -f "$SD/converted.declined" ] \
+      && ok "saying No when the firmware ignores it is a refusal, not a stamp" \
+      || bad "saying No when the firmware ignores it is a refusal, not a stamp" \
+             "rc=$rc declined=$([ -f "$SD/converted.declined" ] && echo yes || echo no) $(cat "$TMP/dec.out")"
+    [ "$(read_order)" = "0002 0000" ] \
+      && ok "...and the order is left as the firmware kept it" \
+      || bad "...and the order is left as the firmware kept it" "$(read_order)"
+    fresh
+    plant 0000 "Windows Boot Manager"
+    plant 0002 "AurOS"
+    order 0002 0000
+    "$AF" decline >/dev/null 2>&1
+    [ "$(read_order)" = "0000 0002" ] && [ -f "$SD/converted.declined" ] \
+      && ok "and where the firmware does keep it, No puts Windows first" \
+      || bad "and where the firmware does keep it, No puts Windows first" "$(read_order)"
+else
+    bad "the stand-in firmware did not build" "$(sed -n 1,5p "$TMP/dropw.log")"
+fi
+
 echo
 if [ "$fail" -gt 0 ]; then
     echo "$fail of $checked wrong."
