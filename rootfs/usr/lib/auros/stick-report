@@ -20,7 +20,7 @@
 #      list is asked for without the network's name;
 #    - lines that carry a password, key or secret lose everything after
 #      the label; so do serial numbers;
-#    - UUIDs, MAC addresses, this computer's name and anything under
+#    - UUIDs, MAC addresses, the people's names and anything under
 #      /home or the media folders are removed from every line;
 #    - the top of the file says what is and is not in it.
 #  It is a filter on the way out, not a promise about what a program
@@ -35,7 +35,8 @@ LC_ALL=C; export LC_ALL
 R=${AUROS_REPORT_ROOT:-}
 LINES_MAX=4000         # journal lines, each boot
 SECTION_MAX=262144     # bytes any one section may take
-OUT_MAX=2097152        # bytes the whole report may take
+JOURNAL_MAX=1048576    # bytes a journal or kernel log may take (4000 lines of ~250)
+OUT_MAX=6291456        # bytes the whole report may take
 
 refuse() { echo "stick-report: refusing: $*" >&2; exit 3; }
 
@@ -60,25 +61,51 @@ lsblk -srno RM,TRAN "$src" 2>/dev/null | awk '$1 == "1" || $2 == "usb" { f = 1 }
 
 # ── filters ────────────────────────────────────────────────────────
 HOST=$(hostname 2>/dev/null || cat "$R/etc/hostname" 2>/dev/null || true)
-KEYS='psk|wep-key|passw|passphrase|secret|private-key|token|rescue[ -]?(code|key)|recovery[ -]?key|api-?key|serial'
+# Every AurOS PC is called "auros" until its owner renames it: that is not a
+# private fact, and removing it would turn auros-answer.service into
+# [this-pc]-answer.service. Only a name she (or a maker) chose is removed.
+[ "$HOST" != auros ] || HOST=
+# The login names and real names of the people's accounts (uid 1000 and up):
+# "New session 3 of user NAME" is in nearly every journal.
+PEOPLE=$(getent passwd 2>/dev/null | awk -F: '$3 >= 1000 && $3 < 60000 { print $1; split($5, g, ","); if (g[1] != "") print g[1] }' | tr '\n' ':')
+KEYS='psk|wep-key|passw|passphrase|secret|private-key|rescue[ -]?(code|key)|recovery[ -]?key|api-?key'
+# serial and token only count as a label when followed by words, not digits:
+# "serial8250: ttyS0 is a 16550A" is the kernel naming a driver, not a number.
+KEYS2='serial|token'
 redact() {
-    awk -v host="$HOST" -v K="$KEYS" '
-    {
-        if (host != "" && length(host) > 3) {
-            out = ""; s = $0
-            while ((i = index(s, host)) > 0) { out = out substr(s, 1, i - 1) "[this-pc]"; s = substr(s, i + length(host)) }
-            $0 = out s
+    awk -v host="$HOST" -v people="$PEOPLE" -v K="$KEYS" -v K2="$KEYS2" '
+    # the end of a label (K) followed within 16 characters of cls by = or : ; 0 if none.
+    # No interval braces here: older mawk reads them as text and the rule would silently stop working.
+    function lab(l, K, cls,   pos, st, en, rest) {
+        pos = 1
+        while (pos <= length(l) && match(substr(l, pos), "(" K ")")) {
+            st = pos + RSTART - 1; en = st + RLENGTH
+            rest = substr(l, en, 18)
+            if (match(rest, "^" cls "*[=:]") && RLENGTH <= 17) return en + RLENGTH - 1
+            pos = st + 1
         }
+        return 0
+    }
+    function cut(s, w,   out, i) {
+        if (length(w) < 3) return s
+        out = ""
+        while ((i = index(s, w)) > 0) { out = out substr(s, 1, i - 1) "[removed]"; s = substr(s, i + length(w)) }
+        return out s
+    }
+    BEGIN { np = split(people, who, ":") }
+    {
+        if (host != "" && length(host) > 3) $0 = cut($0, host)
+        for (j = 1; j <= np; j++) $0 = cut($0, who[j])
         # JSON: "disk_serial": "x" goes, the rest of the line stays
         l = tolower($0)
-        while (match(l, "\"[a-z0-9_ -]*(" K ")[a-z0-9_ -]*\" *: *\"[^\"]*\"")) {
+        while (match(l, "\"[a-z0-9_ -]*(" K "|" K2 ")[a-z0-9_ -]*\" *: *\"[^\"]*\"")) {
             $0 = substr($0, 1, RSTART - 1) "\"[removed]\"" substr($0, RSTART + RLENGTH)
             l = tolower($0)
         }
         # a label and everything after it: passwords, keys, secrets, serials
-        if (match(l, "(" K ")[a-z0-9_ #.\"-]{0,16}[=:]")) {
-            print substr($0, 1, RSTART + RLENGTH - 1) " [removed]"; next
-        }
+        e = lab(l, K, "[a-z0-9_ #.\"-]")
+        if (!e) e = lab(l, K2, "[a-z_ #.\"-]")
+        if (e) { print substr($0, 1, e) " [removed]"; next }
         print
     }' |
     sed -E \
@@ -87,12 +114,26 @@ redact() {
         -e 's#/home/[^ "]*#/home/[removed]#g' \
         -e 's#(/run/media|/media)/[^ "]*#\1/[removed]#g'
 }
+# tail_cap  -- stdin to stdout, at most JOURNAL_MAX bytes, keeping the NEWEST lines
+# (the failure is at the end); says so when older ones were cut.
+tail_cap() {
+    _t=$(mktemp "${TMPDIR:-/tmp}/stickreport.XXXXXX") || return 1
+    cat > "$_t"
+    if [ "$(wc -c < "$_t")" -gt "$JOURNAL_MAX" ]; then
+        echo "(older lines cut: more than $JOURNAL_MAX bytes)"
+        tail -c "$JOURNAL_MAX" "$_t" | sed 1d
+    else
+        cat "$_t"
+    fi
+    rm -f "$_t"
+}
 sec() { printf '\n===== %s =====\n' "$1"; }
 # run TITLE COMMAND...  -- one section: the command's output, filtered and capped.
 run() {
     sec "$1"; shift
     if command -v "$1" >/dev/null 2>&1; then
-        "$@" 2>&1 | redact | head -c "$SECTION_MAX"
+        if [ "$1" = journalctl ]; then "$@" 2>&1 | redact | tail_cap
+        else "$@" 2>&1 | redact | head -c "$SECTION_MAX"; fi
     else
         echo "(not on this computer)"
     fi
@@ -134,7 +175,8 @@ WHAT IS NOT IN IT, ON PURPOSE
   - no Wi-Fi names or passwords, and none of the files that hold them
   - no serial numbers, no disk or network-card identifiers
   - no file names, and nothing from the folders under /home
-  - this computer's name is replaced with [this-pc]
+  - the names of the people who use this computer are replaced with [removed];
+    so is this computer's name, if it was changed from the usual one
 Lines that name a password, key, secret or serial lose everything after the label.
 A program can still write something private in its own words in a system message;
 read it through before putting it anywhere public.
@@ -150,7 +192,7 @@ run "System messages, this start (warnings and worse, last $LINES_MAX)" \
 run "System messages, the start before (warnings and worse, last $LINES_MAX)" \
     journalctl -b -1 -p warning -n "$LINES_MAX" --no-pager -o short-iso
 sec "Kernel log (last $LINES_MAX lines)"
-if command -v dmesg >/dev/null 2>&1; then dmesg 2>&1 | tail -n "$LINES_MAX" | redact | head -c "$SECTION_MAX"; else echo "(not on this computer)"; fi
+if command -v dmesg >/dev/null 2>&1; then dmesg 2>&1 | tail -n "$LINES_MAX" | redact | tail_cap; else echo "(not on this computer)"; fi
 run "PCI devices and their drivers (lspci -nnk)" lspci -nnk
 run "USB devices (lsusb)" lsusb
 run "Disk layout" lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT

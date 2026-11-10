@@ -53,7 +53,7 @@ stick-style file system check dropped|s/^    \*\) refuse "\$T is not a stick-sty
 absolute path check dropped|s/^case \$T in \/\*\) ;; \*\) refuse.*/:/
 second argument allowed|s/^\[ \$# -eq 1 \] \|\| refuse.*/T=${1:-}/
 psk label no longer redacted|s/KEYS='psk\|/KEYS='NOPE|/
-serial no longer redacted|s/\|serial'$/|NOSERIAL'/
+serial no longer redacted|s/KEYS2='serial/KEYS2='NOSERIAL/
 uuid no longer redacted|s/\{8\}-/{9}-/
 mac no longer redacted|s/\)\{5\}/){9}/
 host name no longer removed|s/length\(host\) > 3/length(host) > 300/
@@ -61,6 +61,11 @@ home path no longer removed|s,'s#/home/,'s#/nohome/,
 journal not capped|s/-n "\$LINES_MAX" --no-pager/--no-pager/
 network name asked for|s/-f DEVICE,TYPE,STATE //
 connection files read|s/^sec "AurOS version"/cat "$R"\/etc\/NetworkManager\/system-connections\/*; sec "AurOS version"/
+account names kept|s/BEGIN \{ np = split\(people, who, ":"\) \}/BEGIN { np = 0 }/
+usual host name removed too|s/^\[ "\$HOST" != auros \] \|\| HOST=/:/
+serial8250 label too wide|s/lab\(l, K2, "\[a-z_ #\.\\"-\]"\)/lab(l, K2, "[a-z0-9_ #.\\"-]")/
+oldest lines kept past the limit|s/tail -c "\$JOURNAL_MAX" "\$_t" \| sed 1d/head -c "$JOURNAL_MAX" "$_t"/
+interval braces in awk|s/pos = 1$/pos = 1; if (match(l, "x{1}")) pos = 1/
 no list of what is left out|s/WHAT IS NOT IN IT, ON PURPOSE/WHAT/
 EOF
     [ "$mfail" = 0 ] && { echo "  every check goes red when its thing is broken"; exit 0; }
@@ -83,7 +88,12 @@ mkdir -p "$BIN" "$STICK" "$ROOT/etc/auros" "$ROOT/usr/lib" "$ROOT/aurbridge" \
 HOSTNAME_PLANTED=grandmas-laptop
 cat > "$BIN/hostname" <<EOF
 #!/bin/sh
-echo $HOSTNAME_PLANTED
+echo \${FAKE_HOST:-$HOSTNAME_PLANTED}
+EOF
+cat > "$BIN/getent" <<'EOF'
+#!/bin/sh
+echo "root:x:0:0:root:/root:/bin/sh"
+echo "granny:x:1000:1000:Rosalind Quill,,,:/home/granny:/bin/sh"
 EOF
 cat > "$BIN/journalctl" <<'EOF'
 #!/bin/sh
@@ -91,7 +101,11 @@ cat > "$BIN/journalctl" <<'EOF'
 n=; b=0
 while [ $# -gt 0 ]; do case "$1" in -n) n=$2; shift ;; -b) b=$2; shift ;; esac; shift; done
 {
-  i=0; while [ $i -lt 6000 ]; do i=$((i+1)); echo "2026-11-10T10:00:00 grandmas-laptop kernel: JOURNAL-BOOT$b line $i"; done
+  pad=$(printf '%*s' "${FAKE_PAD:-0}" '' | tr ' ' x)
+  i=0; while [ $i -lt 6000 ]; do i=$((i+1)); echo "2026-11-10T10:00:00 grandmas-laptop kernel: JOURNAL-BOOT$b line $i $pad"; done
+  echo "2026-11-10T10:00:00 grandmas-laptop systemd-logind[1]: New session 3 of user granny. (Rosalind Quill)"
+  echo "2026-11-10T10:00:00 auros systemd[1]: auros-answer.service: /usr/lib/auros/answer.sh AUROSUNIT-MARKER"
+  echo "2026-11-10T10:00:00 auros kernel: serial8250: ttyS0 at I/O 0x3f8 SERIAL8250-MARKER"
   echo "2026-11-10T10:00:01 grandmas-laptop NetworkManager[1]: <warn> psk=PLANTED-WIFI-PASSWORD-1 for HomeNet"
   echo "2026-11-10T10:00:02 grandmas-laptop kernel: usb 1-1: SerialNumber: PLANTED-SERIAL-2"
   echo "2026-11-10T10:00:03 grandmas-laptop app[2]: could not open /home/grandma/Documents/PLANTED-TAXES.pdf"
@@ -185,15 +199,28 @@ done
 
 echo "  privacy"
 for m in PLANTED-WIFI-PASSWORD-1 PLANTED-SERIAL-2 PLANTED-SERIAL-3 PLANTED-TAXES 123e4567 aa:bb:cc:dd:ee:ff \
-         PLANTED-CONF-PSK PLANTED-JOURNAL-SERIAL PLANTED-SSID NM-FILE-MUST-NEVER-BE-READ grandmas-laptop; do
+         PLANTED-CONF-PSK PLANTED-JOURNAL-SERIAL granny Quill PLANTED-SSID NM-FILE-MUST-NEVER-BE-READ grandmas-laptop; do
     has "$m" && bad "it must NOT hold: $m" || ok "it does not hold: $m"
 done
 has "psk= \[removed\]" && ok "...the psk line is there, with its value removed" || bad "the psk line is marked removed"
 has "WHAT IS NOT IN IT" && has "no Wi-Fi names or passwords" && ok "the top says what is and is not in it" || bad "the top says what is not in it"
 
+echo "  what must survive the filter"
+has "serial8250: ttyS0 at I/O 0x3f8 SERIAL8250-MARKER" && ok "a driver named serial8250 is not mistaken for a serial number" || bad "serial8250 line is kept"
+# the awk part must not use {n,m}: older mawk reads the braces as text and the psk rule goes quiet
+sed -n "/awk -v host/,/^    }' |/p" "$SCRIPT" | grep -qE '[])a-z"]\{[0-9]' && bad "the awk part uses interval braces (older mawk)" || ok "the awk part uses no interval braces (older mawk)"
+
 echo "  size"
 c0=$(grep -c 'JOURNAL-BOOT0 line' "$F"); c1=$(grep -c 'JOURNAL-BOOT-1 line' "$F")
 [ "$c0" -le 4000 ] && [ "$c1" -le 4000 ] && [ "$c0" -gt 3000 ] && ok "each journal is capped at 4000 lines (got $c0 and $c1)" || bad "each journal is capped at 4000 lines" "got $c0 and $c1"
+
+echo "  the shipped host name, and long lines"
+rm -f "$STICK"/AurOS-report-*.txt
+FAKE_HOST=auros FAKE_PAD=300 report "$STICK" >"$TMP/out2" 2>&1 || bad "second report written" "$(cat "$TMP/out2")"
+G=$(ls "$STICK"/AurOS-report-*.txt 2>/dev/null | head -1)
+grep -q 'auros-answer.service: /usr/lib/auros/answer.sh AUROSUNIT-MARKER' "$G" && ok "the usual name auros is left alone (auros-answer.service stays readable)" || bad "the usual name auros is left alone"
+grep -q 'JOURNAL-BOOT0 line 6000 ' "$G" && grep -q 'JOURNAL-BOOT-1 line 6000 ' "$G" && ok "past the byte limit the NEWEST lines are kept" || bad "past the byte limit the newest lines are kept"
+grep -q 'older lines cut' "$G" && ok "...and it says older lines were cut" || bad "it says older lines were cut"
 
 echo
 [ "$fail" = 0 ] && { echo "  stickreporttest: all green"; exit 0; }
