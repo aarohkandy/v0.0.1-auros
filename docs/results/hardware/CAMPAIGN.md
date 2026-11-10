@@ -91,7 +91,7 @@ report. That is how we learn how many real PCs are turned away, and why.
      me** and write down what it fixed (Fast Startup, space, BitLocker,
      waiting updates).
    - Pick a look. **Next**. **Install AurOS**. One bar and the time left.
-   - **Ready to restart**: it restarts by itself after 60 seconds.
+   - **Ready to restart**: nothing restarts by itself. Press **Restart now** (Restart later just puts the window away).
 4. **After the restart the screen shows text, not a desktop.** That is the
    installer. Do not switch off while it says *Making room on the Windows drive*.
 5. **Say out loud anything that confuses you.** If you hesitate more than ten

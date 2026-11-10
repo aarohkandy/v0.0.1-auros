@@ -923,6 +923,21 @@ R=$(askf "report:/dev/sdb1")
 case "$R" in *"result=failed"*"could not be saved"*) ok "any other end of the program is a failure" ;;
     *) bad "any other end is a failure" "$(echo "$R" | tr '\n' ' ')" ;; esac
 rm -f "$TMP/reporter.rc"
+# A mount left behind by a report that could not let go: no second mount on top of it.
+printf '#!/bin/sh\n[ -e "%s/stale" ]\n' "$TMP" > "$TMP/rbin/mountpoint"
+printf '#!/bin/sh\necho umount >> "%s/rmount.args"; [ -e "%s/stuck" ] || rm -f "%s/stale"; exit 0\n' "$TMP" "$TMP" "$TMP" > "$TMP/rbin/umount"
+chmod 755 "$TMP/rbin/mountpoint" "$TMP/rbin/umount"
+: > "$TMP/stale"; : > "$TMP/rmount.args"
+R=$(askf "report:/dev/sdb1")
+case "$R" in *"result=ok"*) ok "a leftover mount is let go first, then the report is saved" ;;
+    *) bad "a leftover mount is let go first" "$(echo "$R" | tr '\n' ' ')" ;; esac
+[ "$(sed -n 1p "$TMP/rmount.args")" = umount ] && ok "...the let-go comes before the new mount" || bad "...let-go comes first" "$(cat "$TMP/rmount.args")"
+: > "$TMP/stale"; : > "$TMP/stuck"; : > "$TMP/reporter.args"
+R=$(askf "report:/dev/sdb1")
+case "$R" in *"result=failed"*"why=unopened"*) ok "a leftover mount that will not let go: no report is written over it" ;;
+    *) bad "a stuck leftover mount is a failure" "$(echo "$R" | tr '\n' ' ')" ;; esac
+[ ! -s "$TMP/reporter.args" ] && ok "...and the program is not run" || bad "...program not run on a stuck mount"
+rm -f "$TMP/stale" "$TMP/stuck" "$TMP/rbin/mountpoint"
 PATH=$OLDPATH
 unset AUROS_REPORTER AUROS_REPORT_MNT AUROS_REPORT_MOUNT AUROS_REPORT_UMOUNT
 

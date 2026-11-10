@@ -175,7 +175,7 @@ if [ -s "$T/stubs_write.sh" ] && ESP="$SE" sh -c '. "$1"; stubs_write 1111-2222 
     for d in AurOS BOOT ubuntu; do
         f="$SE/EFI/$d/grub.cfg"
         last=$(grep -v '^[[:space:]]*$' "$f" | tail -1)
-        if [ "$last" = exit ] && grep -q 'not on this computer any more' "$f"; then
+        if [ "$last" = exit ] && grep -q 'AurOS could not start from here' "$f" && ! grep -q 'not on this computer any more' "$f"; then
             ok "lockctl: EFI/$d/grub.cfg ends by handing back to the firmware"
         else
             bad "lockctl: EFI/$d/grub.cfg ends by handing back to the firmware" \

@@ -73,6 +73,10 @@ ssid label values no longer cut|s/^        \$0 = ssids\(\$0\)/        $0 = $0/
 wired connection names taken too|s/wireless\|wifi/wireless|wifi|ethernet/
 colon escape not undone|s/if \(c == "\\\\" && length\(s\) > 1\)/if (0)/
 header promises passwords are taken out|s/Wi-Fi passwords are never read, and/Passwords are taken out, and/
+planted link written through (no rm, no new file)|s/^rm -f "\$PART" "\$PART.cut"$/:/;s/^\(set -C; : > "\$PART"\) \|\| .*$/:/
+half report accepted|s/^\[ "\$\(tail -n 1 "\$PART".*$/[ -s "$PART" ] \\/
+TERM not trapped|s/^trap 'exit 1' TERM INT HUP$/:/
+header promises no file names|s/paths under \/home and the media folders are replaced, so the names of her files there are gone/no file names, and nothing from the folders under \/home/
 no list of what is left out|s/WHAT IS NOT IN IT, ON PURPOSE/WHAT/
 EOF
     [ "$mfail" = 0 ] && { echo "  every check goes red when its thing is broken"; exit 0; }
@@ -107,6 +111,7 @@ cat > "$BIN/journalctl" <<'EOF'
 # honours -n like the real one; prints 6000 lines per boot, a marker per boot
 n=; b=0
 while [ $# -gt 0 ]; do case "$1" in -n) n=$2; shift ;; -b) b=$2; shift ;; esac; shift; done
+[ -z "${FAKE_TERM_PIDFILE:-}" ] || { kill -TERM "$(cat "$FAKE_TERM_PIDFILE")"; sleep 1; }
 {
   pad=$(printf '%*s' "${FAKE_PAD:-0}" '' | tr ' ' x)
   i=0; while [ $i -lt 6000 ]; do i=$((i+1)); echo "2026-11-10T10:00:00 grandmas-laptop kernel: JOURNAL-BOOT$b line $i $pad"; done
@@ -236,7 +241,7 @@ for m in PLANTED-WIFI-PASSWORD-1 PLANTED-SERIAL-2 PLANTED-SERIAL-3 PLANTED-TAXES
     has "$m" && bad "it must NOT hold: $m" || ok "it does not hold: $m"
 done
 has "psk= \[removed\]" && ok "...the psk line is there, with its value removed" || bad "the psk line is marked removed"
-has "WHAT IS NOT IN IT" && has "Wi-Fi passwords are never read" && has "names of Wi-Fi networks" && ok "the top says what is and is not in it" || bad "the top says what is not in it"
+has "WHAT IS NOT IN IT" && has "Wi-Fi passwords are never read" && has "names of Wi-Fi networks" && ! has "no file names" && ! has "no serial numbers" && ok "the top says what is and is not in it" || bad "the top says what is not in it"
 
 echo "  what must survive the filter"
 has "serial8250: ttyS0 at I/O 0x3f8 SERIAL8250-MARKER" && ok "a driver named serial8250 is not mistaken for a serial number" || bad "serial8250 line is kept"
@@ -254,6 +259,34 @@ G=$(ls "$STICK"/AurOS-report-*.txt 2>/dev/null | head -1)
 grep -q 'auros-answer.service: /usr/lib/auros/answer.sh AUROSUNIT-MARKER' "$G" && ok "the usual name auros is left alone (auros-answer.service stays readable)" || bad "the usual name auros is left alone"
 grep -q 'JOURNAL-BOOT0 line 6000 ' "$G" && grep -q 'JOURNAL-BOOT-1 line 6000 ' "$G" && ok "past the byte limit the NEWEST lines are kept" || bad "past the byte limit the newest lines are kept"
 grep -q 'older lines cut' "$G" && ok "...and it says older lines were cut" || bad "it says older lines were cut"
+
+echo "  a hostile or failing stick"
+today=$(date +%Y-%m-%d)
+rm -f "$STICK"/AurOS-report-*.txt; rm -rf "$STICK"/.[A-Za-z]*
+printf 'PRECIOUS\n' > "$TMP/victim"
+ln -s "$TMP/victim" "$STICK/.AurOS-report-$today.txt.part"
+report "$STICK" >"$TMP/out3" 2>&1; rc=$?
+[ "$(cat "$TMP/victim")" = PRECIOUS ] && ok "a link planted on the stick as the temp name is not written through" || bad "a planted link is not written through" "victim now: $(head -c 60 "$TMP/victim")"
+[ "$rc" = 0 ] && [ -f "$STICK/AurOS-report-$today.txt" ] && [ ! -L "$STICK/AurOS-report-$today.txt" ] && ok "...and the report is still saved, as a plain file" || bad "...and the report is still saved" "rc=$rc"
+rm -f "$STICK"/AurOS-report-*.txt "$TMP/victim"; rm -rf "$STICK"/.[A-Za-z]*
+
+# a stick that fills up part-way: the write errors are hidden inside the script, so only the
+# closing line says the file is whole (ulimit -f stands in for a full stick)
+( trap '' XFSZ; ulimit -f 300; report "$STICK" >"$TMP/out4" 2>&1 ); rc=$?
+[ "$rc" != 0 ] && ok "a report cut short by a full stick is a failure (exit $rc)" || bad "a cut-short report is a failure" "rc=$rc, file $(ls -A "$STICK" | head -2 | tr '\n' ' ')"
+[ "$(files_on_stick)" = 0 ] && ok "...and no half report is left on the stick" || bad "...no half report is left" "$(ls -A "$STICK" | tr '\n' ' ')"
+rm -rf "$STICK"/.[A-Za-z]* "$STICK"/AurOS-report-*.txt
+
+# timeout sends TERM; dash does not run an EXIT trap then, so the script must trap TERM itself
+if command -v dash >/dev/null 2>&1; then
+    : > "$TMP/pid"
+    env AUROS_REPORT_PATH="$BIN:/usr/bin:/bin" AUROS_REPORT_ROOT="$ROOT" FAKE_MNT="$STICK" FAKE_TERM_PIDFILE="$TMP/pid" \
+        dash -c 'echo $$ > "$1"; exec dash "$2" "$3"' dash "$TMP/pid" "$SCRIPT" "$STICK" >/dev/null 2>&1
+    [ "$(files_on_stick)" = 0 ] && ok "killed by TERM under dash, no .part is left on the stick" || bad "killed by TERM under dash, no .part is left" "$(ls -A "$STICK" | tr '\n' ' ')"
+else
+    grep -q "^trap 'exit 1' TERM" "$SCRIPT" && ok "TERM is trapped (dash is not here to run it)" || bad "TERM is trapped"
+fi
+rm -rf "$STICK"/.[A-Za-z]* "$STICK"/AurOS-report-*.txt
 
 echo
 [ "$fail" = 0 ] && { echo "  stickreporttest: all green"; exit 0; }

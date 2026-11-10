@@ -198,8 +198,13 @@ D=$(date +%Y-%m-%d 2>/dev/null || echo undated)
 NAME="AurOS-report-$D.txt"
 [ ! -e "$T/$NAME" ] || NAME="AurOS-report-$D-$(date +%H%M%S).txt"
 PART="$T/.$NAME.part"
-trap 'rm -f "$NAMES" "$PART"' EXIT
-
+# A stick is not trusted: a name on it may be a link to a file of ours (NTFS keeps
+# links). So the half-written file is taken away first and made new (set -C: it must
+# not exist; only in a subshell, the report's own temp files are made with cat >), and a TERM from `timeout` (dash skips an EXIT trap on a signal) cleans up too.
+rm -f "$PART" "$PART.cut"
+trap 'rm -f "$NAMES" "$PART" "$PART.cut"' EXIT
+trap 'exit 1' TERM INT HUP
+(set -C; : > "$PART") || { echo "stick-report: could not write on the stick" >&2; exit 1; }
 {
 cat <<EOF
 AurOS report, saved $(date -u '+%Y-%m-%d %H:%M UTC' 2>/dev/null)
@@ -216,13 +221,14 @@ WHAT IS NOT IN IT, ON PURPOSE
   - Wi-Fi passwords are never read, and none of the files that hold them are opened
   - the names of Wi-Fi networks this computer has saved or can see are replaced
     with [removed]
-  - no serial numbers, no disk or network-card identifiers
-  - no file names, and nothing from the folders under /home
-  - the names of the people who use this computer are replaced with [removed];
-    so is this computer's name, if it was changed from the usual one
+  - lines that name a serial number lose it; UUIDs and network-card addresses are replaced
+  - paths under /home and the media folders are replaced, so the names of her files there are gone
+  - the login names and full names of the people who use this computer are replaced
+    with [removed]; so is this computer's name, if it was changed from the usual one
+    (a first name written alone is not looked for)
 Lines that name a password, key, secret or serial lose everything after the label.
 A program can still write something private in its own words in a system message
-(a very short Wi-Fi name, for one); read it through before putting it anywhere public.
+(a very short Wi-Fi name or a file name outside /home, for two); read it through before putting it anywhere public.
 EOF
 
 sec "AurOS version"
@@ -245,7 +251,10 @@ run "Sound cards (aplay -l)" aplay -l
 printf '\n===== end of report =====\n'
 } > "$PART" 2>/dev/null
 
-[ -s "$PART" ] || { echo "stick-report: could not write on the stick" >&2; exit 1; }
+# A full or failing stick hides its write errors above: only a file that ends with
+# the closing line is whole. Anything else is not "done".
+[ "$(tail -n 1 "$PART" 2>/dev/null)" = "===== end of report =====" ] \
+    || { echo "stick-report: the stick is full or could not be written to" >&2; exit 1; }
 if [ "$(wc -c < "$PART")" -gt "$OUT_MAX" ]; then
     head -c "$OUT_MAX" "$PART" > "$PART.cut" && mv -f "$PART.cut" "$PART"
     printf '\n===== report cut here: it was longer than %s bytes =====\n' "$OUT_MAX" >> "$PART"

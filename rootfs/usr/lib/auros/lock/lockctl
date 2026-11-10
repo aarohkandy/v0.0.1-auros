@@ -405,8 +405,10 @@ cmd_boot_sync() {
 }
 
 # The three stubs grub reads first. Each tries the menu on the EFI
-# partition, and falls back to the one on AurOS's own partition, so a
-# missing or half-written /auros still starts a plain AurOS.
+# partition, and falls back to the one on AurOS's own partition (readable only
+# while that partition is not encrypted), so a missing or half-written /auros still
+# starts a plain AurOS there; where it cannot, the words say only that AurOS did not
+# start, never that it is gone.
 stubs_write() { # ESPUUID ROOTUUID
     local d
     for d in AurOS BOOT ubuntu; do
@@ -422,7 +424,7 @@ if search --no-floppy --fs-uuid --set=root $2 ; then
   configfile (\$root)/boot/grub/grub.cfg
 else
   echo
-  echo "  AurOS is not on this computer any more."
+  echo "  AurOS could not start from here."
   echo "  This computer will start what comes next."
   sleep 6
 fi

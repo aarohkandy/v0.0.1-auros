@@ -3,7 +3,7 @@
  "pictures": {
   "setup-check.jpg": {
    "source": "docs/shots/wizard/hidpi-1c-welcome-ready.png",
-   "source_sha256": "2d258de5399f9792e658eca93fd3b058d7a442e809b86e861ff0852c23e7756e",
+   "source_sha256": "12dd6f2957d6ac41dbfe04195e91b6d723243a7567a5cf6b22ff0190e9b187ed",
    "says": [
     "Let’s put AurOS on this computer",
     "AurOS is a free, simple new way to use this computer. AurOS is made to keep Windows and your files. If AurOS isn’t for you, you can go back to Windows.",
@@ -22,7 +22,7 @@
   },
   "setup-look.jpg": {
    "source": "docs/shots/wizard/hidpi-3a-style.png",
-   "source_sha256": "005f17e5def50eb888a77e98dec148687f5354f74208431bc09bb0e523a66cb0",
+   "source_sha256": "695133e05d7f45fb4cc1d90bb7f1b17f736a3ec42f75f9ac6fb3d537ac2878a9",
    "says": [
     "Pick the look you want",
     "Like Windows",
@@ -48,7 +48,7 @@
   },
   "setup-ready.jpg": {
    "source": "docs/shots/wizard/hidpi-4a-ready.png",
-   "source_sha256": "5362ae5bca8ab3ac3477bf611047c4b96544fa14af428da788741304ba2eecfd",
+   "source_sha256": "f212f8fcc62b1d0b8acb4ee715618d6f7f868494804955fe6d85f9bcd59670ed",
    "says": [
     "Ready to install",
     "Windows and your files are kept. Setup makes Windows smaller to fit AurOS. If the power fails or the computer crashes during that step, Windows or your files could be damaged and might not come back.",

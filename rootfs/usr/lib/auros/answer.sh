@@ -448,7 +448,9 @@ case "$word" in
             exfat) rfs=exfat ;; vfat) rfs=vfat ;; ntfs) rfs=ntfs-3g ;; *) rfs= ;;
         esac
         mkdir -p "$RMNT" 2>/dev/null
-        if [ -z "$rfs" ] || ! ${AUROS_REPORT_MOUNT:-mount} -t "$rfs" -o rw,noatime,nosuid,nodev,noexec,umask=022 "$sdev" "$RMNT" 2>/dev/null; then
+        # a leftover mount from a report that could not let go must not get a second one on top
+        if mountpoint -q "$RMNT" 2>/dev/null; then ${AUROS_REPORT_UMOUNT:-umount} "$RMNT" 2>/dev/null; fi
+        if mountpoint -q "$RMNT" 2>/dev/null || [ -z "$rfs" ] || ! ${AUROS_REPORT_MOUNT:-mount} -t "$rfs" -o rw,noatime,nosuid,nodev,noexec,umask=022 "$sdev" "$RMNT" 2>/dev/null; then
             say "result=failed"
             say "why=unopened"
             say "note=AurOS could not open the USB stick to save the report"
