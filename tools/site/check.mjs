@@ -1272,9 +1272,11 @@ for (const [at, want] of [
         // the sheet is meant to be printed on two pages, with the menu-key way back to AurOS on it and no private mailbox
         const sheet = await page.evaluate(() => document.querySelector(".sheet").innerText);
         check(/came up when you wanted AurOS/i.test(sheet) && /choose the one that says AurOS/i.test(sheet) && !/@[a-z0-9-]+\.(com|org|net)/i.test(sheet), "bootfix: the printed sheet says what to do when the computer starts Windows instead of AurOS (menu key, the one that says AurOS), with no private mailbox on it");
-        const pdf = await page.pdf({ preferCSSPageSize: false });
+        // Letter is the shorter paper; the margins come from the @page rule in site.css (Playwright's own default is none).
+        const pdf = await page.pdf({ format: "Letter", preferCSSPageSize: true });
         const pages = (pdf.toString("latin1").match(/\/Type\s*\/Page[^s]/g) || []).length;
-        check(pages === 2, "bootfix: the printed sheet still fits two pages (a third spills the last lines)", "pages=" + pages);
+        check(/^@page\s*\{\s*margin:\s*\d+mm/m.test(fs.readFileSync(path.join(SITE, "assets/site.css"), "utf8")), "bootfix: site.css gives the printed sheet real margins (@page), so the page count below means what a real print gives");
+        check(pages === 2,"bootfix: the printed sheet still fits two pages (a third spills the last lines)", "pages=" + pages);
       }
       await ctx.close();
     }

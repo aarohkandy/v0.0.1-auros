@@ -434,6 +434,8 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 .sheet-cols h3 { font-size: 22px; margin-bottom: 6px; }
 .sheet-foot { margin-top: 22px; color: var(--ink-2); }
 @media (max-width: 700px) { .sheet-cols { grid-template-columns: minmax(0, 1fr); } }
+/* The sheet fits two pages with these margins on Letter or A4; tools/site/check.mjs prints it under exactly this rule. */
+@page { margin: 10mm; }
 @media print {
   .no-print, .bar, .foot, .skip { display: none !important; }
   body { background: #fff; font-size: 16pt; line-height: 1.45; }
