@@ -252,7 +252,7 @@ R=$( { say "" "Windows is back." "aurstage-report v1 verdict=restored record=don
 [ "$(head_of "$R")" = "Windows is back" ] && ok "heading when Windows is back: Windows is back" || bad "heading when Windows is back" "$(head_of "$R")"
 mk=$(printf '%s\n' "$G" | sed -n 's/^mark=//p'); gr=$(printf '%s\n' "$G" | sed -n 's/^ground=//p')
 [ "$mk" = 0B5D4F ] && ok "the mark is drawn, in the go green (0B5D4F)" || bad "the mark is drawn, in the go green" "colour at its middle: $mk"
-[ "$gr" = F6F2E9 ] && ok "on paper (F6F2E9): the Light look, not the old dark one" || bad "on paper (F6F2E9)" "colour of the page: $gr"
+[ "$gr" = F5F7FA ] && ok "on paper (F5F7FA): the Light look, not the old dark one" || bad "on paper (F5F7FA)" "colour of the page: $gr"
 
 # THE DISPLAY GOES AWAY MID-INSTALL (a graphics driver replaces the firmware's: probe.c loads the image's
 # drivers) and the screen must ask for the new one. A fake display in place of kms.c; the first flip fails.

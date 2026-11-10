@@ -83,15 +83,15 @@
 /* The Light tokens of docs/DESIGN-DIRECTION.md section 3, hardcoded like
  * aursorry's: nothing here may depend on a theme file the install has
  * not written yet. */
-#define PAPER  0xF6F2E9u
-#define SOFT   0xECE6DAu
+#define PAPER  0xF5F7FAu
+#define SOFT   0xF0F3F7u
 #define INK    0x17181Au
 #define INK2   0x3A3D42u
-#define RULE   0x6E675Cu
+#define RULE   0x687079u
 #define GO     0x0B5D4Fu
 #define WARNC  0x8A5A12u
 #define WARNT  0xF7EBD2u
-#define TRACK  0xDDD6C8u
+#define TRACK  0xD5DBE1u
 
 enum { M_INSTALL, M_RESTORE, M_DRY };
 enum { W_NONE, W_UNTOUCHED, W_ROOM, W_SMALLER, W_AUROS, W_WINDOWS };
