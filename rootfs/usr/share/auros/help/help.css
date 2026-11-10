@@ -1,7 +1,7 @@
 /* AurOS help pages: on the computer, opened by Help, then "Show me how
  * to do things".
  *
- * docs/DESIGN-DIRECTION.md: warm paper, black ink, one green that means
+ * docs/DESIGN-DIRECTION.md (Sky): cool paper, white cards, black ink, one green that means
  * "this way" (not used here: nothing on these pages is the way forward
  * but the words), links in ink with an underline, the UI face, no
  * shadows. Nothing is loaded from anywhere, not even from this folder:
@@ -9,10 +9,10 @@
  * work with no internet ("Getting online" is one of them).
  * tools/helptest.py checks the sizes, the links, the words and the colours. */
 :root {
-  --bg: #F6F2E9;      /* paper */
-  --soft: #ECE6DA;
-  --card: #FCFAF5;
-  --rule: #6E675C;    /* every border: 5.0:1 on paper */
+  --bg: #F5F7FA;      /* paper (Sky) */
+  --soft: #F0F3F7;
+  --card: #FFFFFF;
+  --rule: #687079;    /* every border: 4.7:1 on paper, 5.0 on a card */
   --ink: #17181A;
   --ink-2: #3A3D42;
   --warn: #8A5A12; --warn-bg: #F7EBD2;

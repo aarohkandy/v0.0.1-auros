@@ -38,7 +38,7 @@ export function waitPage(why, now, site) {
   const next = new Date(now); next.setUTCHours(24, 0, 0, 0);
   const retry = why === "full" ? Math.max(60, Math.ceil((next - now) / 1000)) : 3600;
   const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(h)}</title>
-<style>body{background:#F6F2E9;color:#17181A;font:21px/1.5 system-ui,sans-serif;margin:0;padding:48px 24px}main{max-width:36rem;margin:auto}h1{font-size:34px;line-height:1.2}a{color:#0B5D4F}</style></head>
+<style>body{background:#F5F7FA;color:#17181A;font:21px/1.5 system-ui,sans-serif;margin:0;padding:48px 24px}main{max-width:36rem;margin:auto}h1{font-size:34px;line-height:1.2}a{color:#0B5D4F}</style></head>
 <body><main><h1>${esc(h)}</h1><p>${esc(p)}</p><p><a href="${esc(site)}">Back to the AurOS page</a></p></main></body></html>`;
   return new Response(html, { status: 503, headers: { "content-type": "text/html; charset=utf-8", "retry-after": String(retry), "cache-control": "no-store", "x-auros-gate": why } });
 }

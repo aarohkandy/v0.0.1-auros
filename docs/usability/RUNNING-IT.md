@@ -49,7 +49,7 @@ open http://127.0.0.1:8765/docs/usability/wizard-sim/index.html   # full screen
   anything real.
 - **When the shots change** (a restyle), press `H` and check that every box sits on
   its button. If not, re-measure: the buttons are the pixels of colour
-  `#0B5D4F` (green, primary) and `#FCFAF5` (card, secondary) in the bottom 130 rows
+  `#0B5D4F` (green, primary) and `#FFFFFF` (card, secondary) in the bottom 130 rows
   of the 1120x690 picture; the numbers live in `HOT` at the top of the file.
 - Use her kind of mouse. A trackpad measures a different person.
 - The picture is 1120 px wide; on the Mac's default resolution it shows at about

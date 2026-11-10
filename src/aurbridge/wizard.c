@@ -147,11 +147,11 @@ static LRESULT acc_LresultFromObject(REFIID r, WPARAM w, LPUNKNOWN u)
  *
  * Text is at least 4.5:1 on every surface it sits on, and so is every
  * rule: a 2 px rule is what makes a thing look pressable. */
-#define C_BG          0xF6F2E9u   /* paper: the page                    */
-#define C_SOFT        0xECE6DAu   /* soft: the sidebar, a quiet panel   */
-#define C_SURFACE     0xFCFAF5u   /* card: a button, a look's card      */
+#define C_BG          0xF5F7FAu   /* paper: the page (Sky)              */
+#define C_SOFT        0xF0F3F7u   /* soft: the sidebar, a quiet panel   */
+#define C_SURFACE     0xFFFFFFu   /* card: a button, a look's card      */
 #define C_SELECTED    0xE1ECE7u   /* the chosen card only, never hover  */
-#define C_RULE        0x6E675Cu   /* every border and outline: 5.0:1    */
+#define C_RULE        0x687079u   /* every border and outline: 4.7:1    */
 #define C_INK         0x17181Au   /* all text she must read: 15.9:1     */
 #define C_INK2        0x3A3D42u   /* secondary text, icons: 9.8:1       */
 #define C_QUIET       0x5C6066u   /* legal lines only: 5.7:1            */
@@ -225,11 +225,11 @@ static const style_info STYLES[] = {
 
 /* themes/sandstone.theme ("Light", the theme every card installs) and
  * the footer's fixed colours (src/aurshell/foot.c), for the pictures. */
-#define LT_PAPER    0xF6F2E9u
-#define LT_SOFT     0xECE6DAu
-#define LT_CARD     0xFCFAF5u
-#define LT_RULE     0x6E675Cu
-#define LT_TEXT     0xBDB6AAu   /* a line of text, drawn as a stub     */
+#define LT_PAPER    0xF5F7FAu
+#define LT_SOFT     0xF0F3F7u
+#define LT_CARD     0xFFFFFFu
+#define LT_RULE     0x687079u
+#define LT_TEXT     0xBCC3CBu   /* a line of text, drawn as a stub     */
 #define LT_INK      0x17181Au
 #define LT_GO       0x0B5D4Fu
 #define FOOT_BG     0x14171Bu
@@ -2043,8 +2043,12 @@ static void stepper(int x, int y, int w, int h)
     int seg = (w - S(8)) / 3;
     int lit = (int)((g_ticks * 60 / 600) % 3);
     for (int i = 0; i < 3; i++)
-        fill_rr((float)(x + i * (seg + S(4))), (float)y, (float)seg, (float)h, (float)h * 0.5f,
-                i == lit ? C_ACCENT : C_SOFT, 1.f);
+    {
+        float sx = (float)(x + i * (seg + S(4)));
+        fill_rr(sx, (float)y, (float)seg, (float)h, (float)h * 0.5f, i == lit ? C_ACCENT : C_SOFT, 1.f);
+        if (i != lit) /* soft on paper is 1.05:1: outline it like the determinate bar */
+            stroke_rr(sx, (float)y, (float)seg, (float)h, (float)h * 0.5f, 1.f, C_RULE, 1.f);
+    }
 }
 
 /* Working, done, something she needs to do, or something we will do. */
@@ -6951,7 +6955,8 @@ static int nav_test(const char *dir)
             { ACC, BG, "green words on the page" }, { ACC, SEL, "green words (Chosen) on the chosen card" },
             { ACC, SURF, "green words on a card" }, { WARN, TINT, "the warning's ink on its tint" },
             { WARN, BG, "the warning's ink on the page" }, { RULE, BG, "a border on the page" },
-            { RULE, SURF, "a border on a card" },
+            { RULE, SURF, "a border on a card" }, { RULE, SOFT, "a border on the side panel" },
+            { QUIET, SOFT, "the quiet legal ink on the side panel" },
         };
         for (size_t i = 0; i < sizeof P / sizeof P[0]; i++) {
             double a = lum_[P[i].fg], b = lum_[P[i].bg];

@@ -66,7 +66,7 @@ Facts that shape the direction:
 ## 1. The idea in one sentence
 
 AurOS should look like **the clear printed instructions that come in the box**:
-warm paper, black ink, one green that always means "this way", and the same
+soft sky-white paper, black ink, one green that always means "this way", and the same
 picture of her screen wherever she sees it, from the website through the
 installer to the desktop.
 
@@ -122,11 +122,11 @@ this document, the departure is written in place below and marked *Sky*.
 
 | Token (theme key) | Hex | Use | Contrast |
 |---|---|---|---|
-| paper (`bg`) | `#F5F7FA` (*Sky*; the installer keeps `#F6F2E9`) | page, desktop, wizard content | — |
-| soft (`bg_alt`) | `#FAFBFC` (*Sky*; installer `#ECE6DA`) | bars, wizard sidebar, alternate sections | — |
-| card (`surface`) | `#FFFFFF` (*Sky*; installer `#FCFAF5`) | windows, menus, dialogs | — |
+| paper (`bg`) | `#F5F7FA` (*Sky*, the installer and staging screen too since the "one look" lane) | page, desktop, wizard content | — |
+| soft (`bg_alt`) | `#FAFBFC` (*Sky*; installer sidebar `#F0F3F7`: a rule is still 4.5:1 on it) | bars, wizard sidebar, alternate sections | — |
+| card (`surface`) | `#FFFFFF` (*Sky*, installer too) | windows, menus, dialogs | — |
 | selected (`surface_hi`) | `#E1ECE7` | the chosen row or card only (never hover) | — |
-| rule (`overlay`) | `#687079` (*Sky*; installer `#6E675C`) | every border and outline | 4.7 paper, 5.0 card |
+| rule (`overlay`) | `#687079` (*Sky*, installer too) | every border and outline | 4.7 paper, 5.0 card |
 | ink (`fg`, `fg_hi`) | `#17181A` | all text she must read or act on, focus ring, warning text | 15.9 paper, 14.3 soft, 14.7 selected |
 | ink-2 (`subtle`) | `#3A3D42` (*Sky* desktop `#33363B`: the shell paints it at 85%, still 7:1) | secondary text, "why can't I press this" explanations | 9.8 paper, 8.8 soft, 9.0 selected |
 | quiet (`muted`) | `#5C6066` (*Sky* website and desktop `#464A51`: 7:1 on every ground) | **legal lines, and the hint in the taskbar** | 5.7 paper, 5.1 soft (`#464A51`: 8.3 paper, 7.6 soft) |

@@ -676,7 +676,7 @@ def main():
     pairs = [("ink", "bg"), ("ink-2", "bg"), ("ink", "soft"), ("ink-2", "soft"),
              ("ink", "card"), ("ink", "warn-bg"),
              ("bar-dim", "bar"), ("bar-ink", "bar-hot"), ("marker", "bar")]
-    rules = [("rule", "bg"), ("rule", "card")]   # no frame is drawn on --soft
+    rules = [("rule", "bg"), ("rule", "card"), ("rule", "soft")]   # .bar border sits on --soft
     for name, t in schemes:
         low = []
         for fg, bg in pairs + rules:
