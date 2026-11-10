@@ -216,6 +216,10 @@ guarded=$(awk '/power_still_on\(\);/ {p=NR} /step\(REC_GATE_OK/ {if (p && NR-p<=
   && ok "every gate looks at the power just before it is passed" \
   || bad "every gate looks at the power just before it is passed" "$guarded of $gates gates are preceded by power_still_on()"
 sed -n '/^static void power_still_on/,/^}/p' src/aurstage/install.c > "$TMP/psl.txt"
+# On the fast path Windows has already made room, so "nothing has been changed" would be untrue there.
+grep -q 'Nothing has been changed' "$TMP/psl.txt" \
+  && bad "the power refusal does not claim nothing was changed (untrue on the fast path)" "$(cat "$TMP/psl.txt")" \
+  || ok "the power refusal does not claim nothing was changed (untrue on the fast path)"
 grep -q 'power_read(NULL' "$TMP/psl.txt" && grep -q '!power_ok' "$TMP/psl.txt" && grep -q '"on-battery"' "$TMP/psl.txt" \
   && ok "...and that look refuses, with nothing changed, when it is not on the mains" \
   || bad "...and that look refuses, with nothing changed, when it is not on the mains" "$(cat "$TMP/psl.txt")"

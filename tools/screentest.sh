@@ -190,8 +190,8 @@ S=$( { say "restoring /dev/vda" "" "aurstage-report v1 verdict=restored record=d
         "Windows is back. This computer will switch itself off;"; } | st restore)
 [ "$(fld "$S" stopped)" = 0 ] && [ "$(fld "$S" finished)" = 1 ] \
     && ok "a restore that worked: finished, not stopped" || bad "a restore that worked: finished, not stopped" "$S"
-case "$S" in *"para=The screen goes black, then Windows starts. About two minutes."*) ok "...and says what the black screen is" ;;
-    *) bad "...and says what the black screen is" "$S" ;; esac
+case "$S" in *"para=The screen goes black, then Windows starts."*"para=Windows may check its drive first. That can take a long time. Please let it finish."*) ok "...and says what the black screen is, and that Windows may check its drive" ;;
+    *) bad "...and says what the black screen is, and that Windows may check its drive" "$S" ;; esac
 
 S=$( say "AurOS staging environment" "this is the one restart; nothing has been changed yet" \
          "5 drivers loaded" "this machine has 3 disks" | st install)

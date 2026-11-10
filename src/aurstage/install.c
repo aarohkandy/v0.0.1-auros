@@ -193,7 +193,7 @@ static void power_still_on(void)
     power_state pw; char pwhy[200];
     power_read(NULL, &pw);
     if (!power_ok(&pw, pwhy, sizeof pwhy))
-        refuse(pwhy, "Plug it in and try again. Nothing has been changed.",
+        refuse(pwhy, "Plug it in and try again.",
                "on-battery");
 }
 
