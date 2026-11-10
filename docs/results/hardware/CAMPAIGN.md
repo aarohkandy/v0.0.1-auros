@@ -1,80 +1,39 @@
-# The real-PC test: five computers, in your hands
+# Testing AurOS on real PCs
 
-For the owner. Written 2026-10-23 by stream HW. Plain on purpose.
+For the owner, rewritten 2026-11-10 for the public release (`v0.1.0-e474f99`).
+Nothing in AurOS has run on a physical PC before this; every run so far was a
+virtual machine. Each real PC you try finds things no virtual machine can.
 
-**Why.** Every test so far ran in a pretend computer. A pretend computer
-cannot show the things that actually hurt a person: a firmware that ignores
-"start AurOS next" (so she lands in Windows and thinks AurOS is gone), a
-Wi-Fi chip with no driver, an encrypted drive, a slow hard disk that turns
-ten minutes into two hours. Five real computers show those. The public
-link stays shut until they are green (`docs/PLAN-END-TO-END.md`, WP-33).
-
-**When.** Not yet for the install itself: the lead says "go" when the
-prerelease installer and the safety tests are green. **Step 1 (the report)
-is safe today and can be done on any PC at any time, including a PC you are
-thinking of buying (ask the seller to run it) and the PCs of the five
-people you recruit for the people test.** The report only looks; it changes
-nothing.
+**The one rule above all others:** use PCs whose files you do not need. If any
+PC loses a file, stop the whole test and tell the lead before touching the next.
 
 ---
 
-## 1. Which five computers to get
+## 0. The order, for a pile of PCs
 
-Used or refurbished is right: this is what her computer looks like. Roughly
-$100 to $400 each, about $1,000 for the five. Prices are my guess, not a
-quote. Buy from somewhere with returns.
+1. **Every PC: the report (5 minutes, changes nothing).** Section 2. Do this on
+   all of them first. It tells you which ones the installer will take and what it
+   predicts will work.
+2. **Pick the first install:** the PC you care least about, that the report
+   said YES for. Do sections 3 to 6 on it, start to finish, before the second.
+3. **Then the rest, one at a time.** Most different first: a laptop, a desktop,
+   an old hard-disk PC, a new Windows 11 laptop (BitLocker), an AMD one, a Nvidia
+   one, one the report said NO for (to see the refusal on a real screen).
+4. **For each PC, fill in one sheet** (`TEMPLATE.txt`, section 7).
 
-How to read a listing: ask the seller for a photo of **Device Manager**
-(Windows key, type "device manager", open it, open "Network adapters"). The
-Wi-Fi line names the chip. That line is what decides machines 1 and 4.
-
-| # | What | Why this one | What to ask for in the listing |
-|---|---|---|---|
-| 1 | **A 2013 to 2016 laptop with a Broadcom Wi-Fi chip and no network-cable socket.** Thin laptops of that time (some Dell XPS 13 and Inspiron models, some HP thin laptops) used Broadcom "802.11ac" cards (names with BCM4352, BCM4360, DW1560). | The one case where we **refuse before anything changes**. The report must say AurOS would have no internet here. Proves the refusal screen on a real one, and that nobody is left stuck. | "Broadcom" in the Wi-Fi line of Device Manager; Windows 10; any size of drive. |
-| 2 | **A Windows 11 laptop from 2023 or later, set up with a Microsoft account** (a budget Lenovo IdeaPad, HP 15 or Acer Aspire is fine, new about $350). | New Windows 11 laptops turn on **BitLocker (drive lock) by themselves**. Today every such PC is refused. This tells us how many PCs that is, and later tests the "pause for one restart" path. | New, or "set up with Microsoft account". |
-| 3 | **An old desktop or laptop with a spinning hard disk** (not SSD) and 4 GB of memory: Dell OptiPlex, Lenovo ThinkCentre, HP ProDesk 2012 to 2016, Windows 10, with a network cable. | The one-hour promise lives or dies on a slow disk. Also: **no Wi-Fi at all**, the cable path. | "HDD", "500GB" or "1TB" 7200 RPM; Windows 10. |
-| 4 | **An AMD Ryzen laptop from 2021 to 2024** (Lenovo IdeaPad 3/5, HP 15, Acer Aspire 5) whose Wi-Fi line says **Realtek RTL8852BE or RTL8852CE** (very common in budget laptops). | Our list says that Wi-Fi works but may drop out. Nobody has checked on the real thing. Also tests AMD graphics and AMD sound. | "Realtek 8852" in Device Manager; or just buy and read the report. |
-| 5 | **A business laptop from 2021 to 2024 with a 12th or 13th generation Intel chip** (used ThinkPad T14 / X1, Dell Latitude, HP EliteBook; $300 to $500). | These have the camera on an Intel chip (IPU6) that AurOS cannot use yet: the report must say **"Your camera won't work yet"** and the camera really must not work. Newest Intel Wi-Fi and sound. A very common kind of PC. | "12th Gen" or "13th Gen Core i5/i7", "Windows 11 Pro". |
-
-That is five computers, at least four makers, one with a hard disk (3), one
-Broadcom Wi-Fi-only (1), one with BitLocker (2) — which is what WP-33 asks.
-If one of them is hard to find, the report from a different PC with the
-same trouble does the same job. **A sixth is worth having if you can: any
-Surface laptop or a Windows 10 tablet-style PC.** They break more rules
-than anything else.
-
-**Three USB Wi-Fi sticks, $10 to $45 each.** The Setup screen for a
-computer whose own Wi-Fi will not work says that a USB Wi-Fi stick with a
-MediaTek MT7612U, MT7921 or MT7601U chip fixes it, and points to the list on
-the website (`website/advanced.html`, "Which USB Wi-Fi stick to buy", made
-from `hw/sticks.json` and checked by `tools/hw/sticks.py`). She will buy what
-that list says, so the list is tested here before anyone relies on it. Plug
-each stick, one at a time, into computer 1 (the Broadcom one, whose own Wi-Fi
-will not work) before Step 1, and run the report:
-
-| Stick | Buy | Expected |
-|---|---|---|
-| A | the cheapest stick on the list: a **MediaTek MT7601U** one (the TP-Link TL-WN727N version 4, or whichever listing names the MT7601U) | the report says "Your Wi-Fi will work", and in AurOS it connects |
-| B | a **MediaTek MT7612U** or **MT7921AU** one from the list (ALFA AWUS036ACM, NETGEAR A6210, or the NETGEAR A8000) | the same |
-| C | one that is NOT on the list: a **Realtek RTL8812AU or RTL8821AU** one, such as the TP-Link Archer T2U Nano | the report decides: with the present kernel it says "won't work"; with the newer kernel it will say "works", and then AurOS itself must connect before that chip may ever join the list |
-
-If A or B behaves differently from the table, or a product on the list turns
-out to carry another chip, that is a finding: the list (and the sentence on
-the screen) changes before launch.
+A PC the report says NO for is still useful: install nothing on it, keep its
+report. That is how we learn how many real PCs are turned away, and why.
 
 ---
 
-## 2. Before you touch any of them
+## 1. Before you touch a PC
 
-1. **Write the exact model** (sticker on the bottom, or Settings > System
-   > About). Photograph the sticker **with your thumb over the serial
-   number**.
-2. **Do not update or "fix" Windows first.** We want it as a person has it.
-   The exception: if Windows says it has an update waiting to restart, restart
-   once and write that down.
-3. **Make a canary.** One folder with three files you will check at the end,
-   to prove we lost nothing. In Windows, open **PowerShell** (Windows key,
-   type `powershell`, Enter) and paste these three lines:
+1. **Write down the exact model** (sticker underneath, or Settings > System >
+   About). Photograph the sticker **with your thumb over the serial number**.
+2. **Do not update or tidy Windows first.** We want it as a person has it.
+3. **Plug in the charger**, and a printer if you have one (so the report lists it).
+4. **Make a canary**, three files we check at the end to prove nothing was lost.
+   Windows key, type `powershell`, Enter, paste:
 
    ```
    $d = "C:\Users\Public\canary"; New-Item -ItemType Directory -Force $d | Out-Null
@@ -82,148 +41,167 @@ the screen) changes before launch.
    Get-FileHash "$d\*" | Format-Table Hash, Path
    ```
 
-   Photograph the three hashes (the long letters and numbers). At the end
-   the same command must print the same three.
+   Photograph the three hashes. Put one ordinary photo in `Pictures` and one
+   document in `Documents` too: those are what **Bring my files across** carries.
 
 ---
 
-## 3. Step 1: the report (5 minutes, any time, changes nothing)
+## 2. The report (5 minutes, any PC, changes nothing)
 
-1. Download the newest `AurOS-Setup.exe`. It is on the project's releases
-   page, https://github.com/aarohkandy/v0.0.1-auros/releases ; take the
-   newest one marked **Pre-release** (or the live website once it is up).
-   Save it in **Downloads**. Windows will warn that it is an unknown
-   program: that is expected for now (`docs/SIGNING.md` shows the clicks).
-2. Press the **Windows key + R**. In the little box, paste exactly this and
-   press Enter:
+1. In Edge, open **https://1os.vercel.app** and press **Get AurOS**. Edge says
+   the file *isn't commonly downloaded*: press **Keep**, then the small arrow next
+   to *Delete*, then **Keep anyway**. Do **not** open it yet.
+
+   The same file directly:
+   `https://github.com/aarohkandy/v0.0.1-auros/releases/latest/download/AurOS-Setup.exe`.
+   Its SHA-256 for `v0.1.0-e474f99` begins `4fc62944`. To check it (optional):
+   `Get-FileHash "$env:USERPROFILE\Downloads\AurOS-Setup.exe"` in PowerShell.
+
+2. Windows key + R, paste exactly this, Enter:
 
    ```
    "%USERPROFILE%\Downloads\AurOS-Setup.exe" --report
    ```
 
-3. Windows asks "Do you want to allow this app?" Press **Yes**. A box says
-   where the report is saved (usually the Downloads folder) and that nothing
-   was changed. Two files: `AurOS-report.txt` and `AurOS-report.json`.
-4. Open `AurOS-report.txt` (`SAMPLE-REPORT.txt` in this folder is a made-up one,
-   so you know what to expect). Three parts matter:
-   - **WOULD THE AurOS INSTALLER ACCEPT THIS PC?** A plain yes or no, and why.
-   - **WHAT WILL WORK:** sentences like "Your Wi-Fi will work." and "Your
-     camera won't work yet." These are what she would be told.
-   - **DEVICES WINDOWS SEES:** the chips, so a human can check the sentences.
-5. Rename the two files to the machine's name (`dell-xps-13-9343.report.json`
-   for the JSON; keep the text one too) and put them somewhere you can send.
-
-The same five minutes is how to screen a person's PC for the people test
-(WP-43): if the report says "NO", find another PC, so the session is not
-wasted.
-
-**Printers and scanners:** plug in a printer the machine has used (or any
-printer you own) **before** step 1, so the report lists it. A USB printer
-and a Wi-Fi printer are different tests: do both if you can.
+   (If the download landed somewhere else, put that folder in place of
+   `%USERPROFILE%\Downloads`.)
+3. If a blue **Windows protected your PC** appears: **More info**, **Run anyway**.
+   (No *Run anyway* means Smart App Control is on: this PC cannot run an unsigned
+   installer. Write that down; that is a finding.) Then **Yes** to *allow this app
+   to make changes*.
+4. A box says where the report is: next to the downloaded file (usually
+   Downloads), or the Desktop. Two files: `AurOS-report.txt` and
+   `AurOS-report.json`. Nothing on the PC was changed.
+5. Open `AurOS-report.txt`. The parts that matter: **would the installer accept
+   this PC** (yes or no, and why), **what will work** (Wi-Fi, sound, camera...),
+   and **the devices Windows sees**.
+6. Rename both to the model (`dell-latitude-5420.report.json`, and `.txt`) and
+   keep them. The report carries no serial number, user name, PC name or Wi-Fi name.
 
 ---
 
-## 4. Step 2: photographs, before the install (10 photos)
+## 3. The install (one PC at a time)
 
-Use your phone. One photo each, in this order, named `01-` `02-` and so on:
+1. Photograph, with your phone, **every screen**, in order. Most important: any
+   screen that stops, any that waits a long time, and anything you did not expect.
+2. Start a stopwatch when you press **Install AurOS**. Stop it when AurOS asks
+   **Does everything work?** Write the minutes.
+3. Double-click `AurOS-Setup.exe` (the same Edge / Windows warnings as above).
+   - First page: it checks the PC. If it lists problems, press **Fix these for
+     me** and write down what it fixed (Fast Startup, space, BitLocker,
+     waiting updates).
+   - Pick a look. **Next**. **Install AurOS**. One bar and the time left.
+   - **Ready to restart**: it restarts by itself after 60 seconds.
+4. **After the restart the screen shows text, not a desktop.** That is the
+   installer. Do not switch off while it says *Making room on the Windows drive*.
+5. **Say out loud anything that confuses you.** If you hesitate more than ten
+   seconds, write it down: that is a finding, as important as a crash.
 
-1. The model sticker (thumb over the serial).
-2. Windows key, type `msinfo32`, Enter. Photo of the first page: it shows
-   **BIOS Mode** (UEFI or Legacy) and **Secure Boot State** (On or Off).
-3. Settings > Privacy & security > **Device encryption** (or "BitLocker").
-   Photo of what it says. If neither exists, photo the Settings > System > About page.
-4. Device Manager with **Network adapters**, **Bluetooth**, **Cameras**,
-   **Sound, video and game controllers**, **Display adapters** and **Other
-   devices** all open. Any yellow `!` is important.
-5. The report box from Step 1, and the three canary hashes.
-6. The back or side of the machine, to show its ports (is there a network
-   cable socket?).
-7. The Windows desktop, so we know how it looked before.
-8. The hard disk or SSD: Task Manager (Ctrl+Shift+Esc) > Performance > Disk.
-   It says "HDD" or "SSD".
-9. Settings > Windows Update (are updates waiting?).
-10. Anything that looks odd.
+### If it stops after the restart
 
----
+If the text screen stops with a sentence and `verdict=...`: **photograph it**.
+A stop before *Making room* has changed nothing: switch off and on, Windows
+starts. Then, in Windows, get what it wrote. Windows key, type `powershell`,
+right-click **Run as administrator**, paste:
 
-## 5. Step 3: the install (only when the lead says go)
+```
+mountvol S: /s
+Copy-Item S:\EFI\AurOS\stage.log "$env:USERPROFILE\Desktop\stage.log"
+mountvol S: /d
+```
 
-1. Plug the machine in. Plug in the printer.
-2. Start a stopwatch on your phone when you press **Install AurOS**. Stop
-   it at the screen that asks **"Does everything work?"** Write the minutes.
-3. Photograph **every screen the installer shows**, one photo per screen,
-   in order. The ones that matter most: any screen that says AurOS can't
-   go on, any screen that makes you wait, the restart, anything that asks
-   you a question you did not expect.
-4. **Say out loud anything that confuses you**, or write it on a sticky note.
-   You are the great-grandmother here. If you hesitate for more than ten
-   seconds, that is a finding.
-5. Do not help the installer. If it stops, photograph and stop.
+(If it says `S:` is in use, put another free letter in all three lines.)
+`stage.log` lands on the Desktop. **Copy only `stage.log`**: the same folder
+holds `wifi.conf`, which has the Wi-Fi password in it. Never send that.
 
-### Inside AurOS, the checklist (write yes / no / n/a for each)
-
-- [ ] Wi-Fi: connect to your network, open any website.
-- [ ] Sound: play the test sound; plug in headphones if it has a socket.
-- [ ] Microphone: say something into Settings > Sound > Input; the bar moves.
-- [ ] Camera: open the camera or a video-call page.
-- [ ] Bluetooth: pair a mouse or headphones.
-- [ ] Printer: print a test page.
-- [ ] Scanner: scan one page.
-- [ ] Fingerprint reader: try it, if the machine has one.
-- [ ] Screen: bright enough, brightness keys work, full resolution.
-- [ ] Laptop: close the lid, open it, it comes back. Battery shown?
-- [ ] Open **Get more programs** and install one (VLC).
-
-Then answer "Does everything work?".
+If the PC starts neither AurOS nor Windows: switch it on and press the start-up
+menu key (often **F12**, **F9** or **Esc**; the maker's logo screen usually says)
+and choose **Windows Boot Manager**. Photograph the menu.
 
 ---
 
-## 6. Step 4: Put Windows back (every machine)
+## 4. Inside AurOS (write yes / no / n/a / untested for each)
 
-1. In AurOS: **Put Windows back**. Follow it; photograph each screen.
-2. When Windows is back, run the canary command again (Step 2.3). **The
-   three hashes must be identical.** Photograph them next to the first photo.
-3. Photograph the Windows desktop.
+AurOS first asks **Does everything work?** Do NOT answer yet. Check:
 
-If anything is missing, stop, photograph, **do not retry**, tell the lead.
-A single lost file on any machine stops the whole campaign: that is the
-rule that outranks all the others.
+- [ ] **Wi-Fi**: connect to your network, open a website.
+- [ ] **Network cable**, if it has a socket.
+- [ ] **Sound**: play something; headphones if it has a socket.
+- [ ] **Camera and microphone**: Meet on the Internet start page, start a
+  meeting; you see yourself and its microphone check moves when you speak.
+- [ ] **Bluetooth**: pair a mouse or headphones.
+- [ ] **Screen**: sharp (full resolution), brightness keys work.
+- [ ] **Laptop lid**: close it, wait a minute, open it: does it come back?
+- [ ] **Battery** shown, and goes up on the charger.
+- [ ] **Printer**: print a page.
+- [ ] **A new program**: Get more programs, install VLC, open it.
+- [ ] **Solitaire** from the list: opens, and closing it brings you Home.
+- [ ] **Turn off and on**: **Turn off** at the bottom, then switch on: does AurOS start again?
+- [ ] **Keyboard and touchpad**: typing, two-finger scroll.
 
-## 7. Step 5: the power pull (two machines only, only if the lead says so)
+Then press **Yes, it all works**, then **Start AurOS from now on**, then
+**Bring my files across**. Check the photo and document from section 1 arrived.
 
-Only after the lead confirms the same cut has passed in simulation
-(WP-87). On two of the five: start the install; when the lead's sheet says
-"phase N", pull the power cord (and battery if it comes out). Then power on
-and see what the machine does. Photograph. Expected: either the install
-carries on or Windows comes back untouched. **Not expected: anything else.**
+**If something does not work:** photograph the screen, write what you pressed.
+There is no way yet to save AurOS's own logs from inside it; a photo of the
+screen and the sheet are what we have.
 
 ---
 
-## 8. Hand over the results
+## 5. Getting back to Windows, and putting Windows back
 
-For each machine, copy `docs/results/hardware/TEMPLATE.txt` to
-`<maker-model>.txt`, fill in the lines, and add the `.report.json`. Send the
-files and photos to the lead (or any agent): they commit them, run
-`python3 -I tools/hw/results.py`, and the table in
-`docs/results/hardware/README.md` updates itself. The table says, for every
-machine, what the report **predicted** and what **really** happened, and
-puts the two bad kinds of mistake in red:
+1. **Windows still starts:** switch on, press the start-up menu key, choose
+   **Windows Boot Manager**. Windows should be as it was. Run the canary
+   command again (section 1.4): **the three hashes must be identical**. Look for
+   the folder **From AurOS** in your user folder.
+2. Back in AurOS: **Settings > Put Windows back**, then **Remove AurOS and put
+   Windows back** twice. It restarts, shows text, and **switches itself off**.
+   Do not switch it off while the text is still moving. Switch on: Windows.
+3. Canary again: **identical**. Photograph next to the first photo.
+   Windows' drive should be its old size again (File Explorer > This PC).
 
-- "works" but it did not (we promised something false);
-- "won't work" but it did (we turned someone away who would have been fine).
+If anything is missing: stop, photograph, **do not retry**, tell the lead.
 
-## 9. What "green" means
+---
 
-All of these, on at least five PCs:
+## 6. Things only a real PC can show (watch for these)
 
-- zero lost files on any machine (canary hashes identical);
-- **Put Windows back** works on every machine that installed;
-- every machine either installs and reaches "Does everything work?: Yes", or
-  is refused **before anything changed**, with a sentence that says why;
-- the report's predictions are right, or the wrong ones are fixed;
-- the fraction of PCs the installer refused, and why, is written down (it
-  decides whether BitLocker PCs are worth the extra work before launch);
-- at least one hard-disk machine under an hour;
-- the power pull passed on two.
+- After **Start AurOS from now on**, a later **Windows Update or firmware
+  update** may put Windows first again, and the PC just starts Windows. If that
+  happens, write it down (and use the start-up menu key to reach AurOS).
+- The PC starts Windows straight after the restart in section 3 instead of the
+  text screen: its firmware ignored the one-time start entry. Big finding.
+- BitLocker PCs (new Windows 11 laptops): the installer pauses it for one
+  restart. Afterwards Windows must start **without asking for a recovery key**.
+  If it asks: the key is at https://account.microsoft.com/devices/recoverykey.
+- Nvidia graphics: AurOS uses the open driver; games are slow, the desktop
+  should be fine. Note if the screen is black or wrong.
+- A long wait anywhere (hard disks): write how long.
 
-Then the lead can open the link to the first few people.
+## 6a. Pulling the power (only on a PC you would happily reinstall Windows on)
+
+Only after two PCs have gone all the way through, and only one PC. Start an
+install; while the text screen says *Making room on the Windows drive*, pull the
+power (and the battery if it comes out). Switch on. Expected: the install
+carries on, or Windows starts as before. Anything else is a serious finding.
+
+---
+
+## 7. The sheet, and handing over
+
+For each PC, copy `TEMPLATE.txt` to `<maker-model>.txt` (lower case, dashes),
+fill it in, and put its `.report.json` next to it. Hand the files and photos to
+the lead (or any agent). They commit them and run
+`python3 -I tools/hw/results.py`; `README.md` here becomes the table of what the
+report predicted against what really happened, with the two bad kinds of miss
+in red: promised "works" but did not, and turned away a PC that would have been fine.
+
+## 8. What "good enough for her" means
+
+- No lost file on any PC (canary hashes identical).
+- **Put Windows back** worked on every PC that installed.
+- Every PC either reached **Does everything work?** or was turned away
+  **before anything changed**, with a sentence that says why.
+- Wi-Fi and sound worked wherever the report said they would.
+- At least one hard-disk PC under an hour.
+- Nobody testing was confused for more than ten seconds without it being written down.

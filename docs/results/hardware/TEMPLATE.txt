@@ -1,28 +1,45 @@
 # Copy this to <vendor-model>.txt (lower case, dashes: dell-xps-13-9343.txt) and fill it in.
 # Copy the PC's AurOS-report.json next to it as <vendor-model>.report.json.
-# Every line is "key: value". Leave a line out if it does not apply.
+# Every line is "key: value". Leave a line out if it does not apply. CAMPAIGN.md says how.
 machine: Dell XPS 13 9343
-date: 2026-11-02
-installer: AurOS-Setup.exe from the prerelease, first 8 letters of its SHA-256: 1a2b3c4d
+date: 2026-11-10
+release: v0.1.0-e474f99
+# first 8 letters of the installer's SHA-256 (Get-FileHash); 4fc62944 for v0.1.0-e474f99
+installer: 4fc62944
+# what the PC is: laptop | desktop | tablet; disk: ssd | hdd; windows: 10 | 11
+kind: laptop
+disk: ssd
+windows: 11
+bitlocker: no
+# the report's answer, and what "Fix these for me" fixed (if it showed)
+report_said: yes
+fixed_first:
 # install: ok | refused | failed | not-tried
 install: ok
 # if refused: the sentence the installer showed (or its code from the report)
 refused_because:
+# if it stopped after the restart: the verdict=... word on the screen
+stage_verdict:
 minutes_to_yes: 41
 # put_windows_back: ok | failed | not-tried
 put_windows_back: ok
-# power_pull: ok | failed | not-tried   (only after the lead says it is safe, docs/results/hardware/CAMPAIGN.md)
+# power_pull: ok | failed | not-tried   (CAMPAIGN.md section 6a)
 power_pull: not-tried
 data_loss: no
 # screen_ok: yes | slow | no
 screen_ok: yes
 # What really happened in AurOS: yes | no | n/a (the PC has none) | untested
 wifi_worked: yes
+cable_worked: n/a
 sound_worked: yes
 camera_worked: n/a
 bluetooth_worked: yes
 printer_worked: untested
 scanner_worked: untested
 fingerprint_worked: n/a
+lid_worked: yes
+new_program_worked: yes
+files_came_across: yes
+windows_still_starts: yes
 ---
-Anything else: what looked wrong, what she would have been confused by, where the photos are.
+Anything else: what looked wrong, what she would have been confused by, how long each wait was, where the photos are.
