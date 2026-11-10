@@ -113,7 +113,9 @@ driver), `sane-airscan`/`sane-utils` (scanners), `printer-driver-foo2zjs`,
      packages, 7.0.0-42 (`~24.04.1`, noble-updates and noble-security) beside
      6.8.0-149. `linux-image-7.0.0-42-generic` is the SIGNED image package (the
      other is `linux-image-unsigned-*`); Canonical signs HWE the same as GA, so
-     the shim -> grub -> kernel chain is unchanged. (Whether the signature is
+     the shim -> grub -> kernel chain is unchanged. (Both `vmlinuz-7.0.0-42` and
+     `vmlinuz-6.8.0-149` from the signed packages carry the Canonical certificate
+     string; the signature itself was not verified. Whether the signature is
      accepted by Secure Boot is for the KVM suite below, not proved here.)
    - Cost: +17 MB (image) +166 MB (modules) in downloads, ~+177 MB installed,
      plus one more initramfs in /boot (the 6.8 kernel and its modules stay).
