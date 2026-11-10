@@ -85,8 +85,8 @@ Windows machine before it is published (`.github/workflows/windows.yml`).
 ## Running it
 
 1. On the AurOS website, press **Get AurOS**. Edge says the file
-   *"isn't commonly downloaded"* (it is not signed, and never will be:
-   D7). Press **Keep**, then **Keep anyway** (it is behind the
+   *"isn't commonly downloaded"* (it is not signed yet; signing through SignPath
+   Foundation is planned, D12). Press **Keep**, then **Keep anyway** (it is behind the
    small arrow next to *Delete*), then **Open file**. This is what the
    real-Windows-11 run showed (`docs/handoff/SESSION-2026-11-03.md`).
 2. Some PCs, or other browsers, also show a blue **"Windows protected
@@ -103,8 +103,8 @@ Windows machine before it is published (`.github/workflows/windows.yml`).
    **Fix these for me** (see above).
 5. **Pick the look you want**: *Like Windows* (chosen to begin with),
    *Like a Mac*, *Big and simple* or *One thing at a time*. Each is a
-   picture of the screen you get; all four use the light Sandstone
-   look. Press **Next**. Language, keyboard and time zone come from
+   picture of the screen you get; all four use the light look called
+   Light (the Sky look: white cards under a soft sky). Press **Next**. Language, keyboard and time zone come from
    Windows without a question. You can change the look later in
    AurOS's Settings.
 6. **Ready** says what stays (Windows and your files), how much room
@@ -113,11 +113,12 @@ Windows machine before it is published (`.github/workflows/windows.yml`).
    disk than an SSD; measured from the download already running). Press
    **Install AurOS**. Nothing to type, and nothing that must be ticked. It checks the PC once more, then shows one bar
    and the time left. You can leave it: it keeps the PC awake.
-7. When it is ready it says **Ready to restart** and restarts by itself
-   after 60 seconds, counting down on the screen. **Restart now** does it
-   at once; **Not yet** stops the count. Do not close the window
-   instead: closing it before the restart takes everything back, on
-   purpose.
+7. When it is ready it says **Ready to restart**. Nothing restarts
+   until you press **Restart now** (the screen then goes black for a
+   minute or two; that is normal). **Restart later** just puts the
+   window away: nothing is armed, and you press **Restart now** when you
+   come back. Do not close the window instead: closing it before the
+   restart takes everything back, on purpose.
 
 If it cannot go on at all (a Windows-on-ARM laptop, a PC that starts
 the older way, an Intel-remapped NVMe drive, a failing drive), the page

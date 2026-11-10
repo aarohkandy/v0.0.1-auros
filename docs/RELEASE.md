@@ -119,7 +119,7 @@ about a real PC; item 5 is where that gets proved.
 
 ```
  1 legal entity ──────────► 6 EULA + insurance┬──► public download
- 2 code signing: not done, by decision ───────┤
+ 2 code signing: unsigned now, SignPath planned ┤
  3 image host: GitHub Releases, done ─────────┤
  4 Firefox on the builder: Actions, done ─────┤
  5 real hardware: dry-run fleet ─► spare-PC installs ─► small beta
@@ -150,16 +150,19 @@ or a formation service is optional.
 
 **Unblocks.** 6.
 
-## 2. Code signing: not done, by decision
+## 2. Code signing: unsigned today, SignPath Foundation planned
 
-**The owner's decision (2026-10-23): no code signing, no certificates,
-no Azure, no Microsoft services.** AurOS-Setup.exe is published
-unsigned. `docs/SIGNING.md` says what the person sees and clicks: Edge
-"isn't commonly downloaded" → **Keep** → **Keep anyway**; the blue
-SmartScreen panel → **More info** → **Run anyway**; on a PC with Smart
-App Control on, Smart App Control has to be switched off first.
-`AUROS_RELEASE=1` builds an unsigned installer; the release notes say
-so in one neutral line.
+**The owner's decision (D12, 2026-10-23, later than D7): sign through SignPath
+Foundation** (free for open source, key in their hardware, no Microsoft
+service, no Azure, no paid certificate). **Today AurOS-Setup.exe is
+published unsigned.** The signing job is written and switched off until
+the owner's application is accepted and the secrets exist
+(`docs/SIGNING.md`); no date is promised. Until then `docs/SIGNING.md`
+says what the person sees and clicks: Edge "isn't commonly downloaded" ->
+**Keep** -> **Keep anyway**; the blue SmartScreen panel -> **More info** ->
+**Run anyway**; on a PC with Smart App Control on, Smart App Control has to
+be switched off first. `AUROS_RELEASE=1` builds an unsigned installer; the
+release notes say so in one neutral line.
 
 ## 3. A host for the image: GitHub Releases (done by the pipeline)
 
