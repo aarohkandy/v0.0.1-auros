@@ -50,6 +50,16 @@ while IFS= read -r s; do
       && ok "install.c says: $s" || bad "install.c says: $s" "reworded or gone"
 done < "$T/starts"
 
+# THE PUT-BACK ENDINGS TELL HER ABOUT THE DRIVE CHECK. Growing C: back is done
+# with ntfsresize, which leaves the volume marked so that Windows checks the
+# drive at its next start (src/aurstage/shrink.h). That is a black screen of
+# percentages for minutes or hours, and a held power button is what a person
+# does to a screen like that. Both endings (the restart and the switch-off) say
+# it before they act.
+n=$(grep -cF 'stage_say("Windows may check its drive when it starts, and that can");' src/aurstage/install.c)
+[ "$n" = 2 ] && ok "install.c warns, in both put-back endings, that Windows may check its drive" \
+             || bad "install.c warns, in both put-back endings, that Windows may check its drive" "found $n of 2"
+
 say() { printf 'aurstage: %s\n' "$@"; }
 tm() { printf 'aurstage-time %s\n' "$1"; }
 part() {

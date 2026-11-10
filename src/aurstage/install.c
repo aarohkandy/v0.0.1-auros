@@ -1497,6 +1497,8 @@ void restore_run(const stage_machine *m)
          * black, then Windows starts" is what she was told. */
         stage_say("Windows is back. This computer will restart by itself");
         stage_say("and Windows will start.");
+        stage_say("Windows may check its drive when it starts, and that can");
+        stage_say("take a long time. Please let it finish.");
         sync();
         for (int s = 15; s > 0; s--) {
             stage_screen_note("aurstage-countdown %d", s);
@@ -1507,6 +1509,8 @@ void restore_run(const stage_machine *m)
     stage_say("Windows is back. This computer will switch itself off;");
     stage_say("switch it on again and Windows starts. If an AurOS memory");
     stage_say("stick is plugged in, take it out first.");
+    stage_say("Windows may check its drive when it starts, and that can");
+    stage_say("take a long time. Please let it finish.");
     sync();
     reboot(RB_POWER_OFF);
     for (;;) pause();
