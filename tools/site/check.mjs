@@ -1268,6 +1268,14 @@ for (const [at, want] of [
       const g = await page.evaluate(() => { const h = document.querySelector(".page-head"); const pr = document.getElementById("print").getBoundingClientRect(); return { head: h.innerText, printBottom: pr.bottom, vh: innerHeight, all: document.body.innerText }; });
       check(/close/i.test(g.head) && /nothing has been changed/i.test(g.head) && /show this page to someone you trust/i.test(g.head) && g.printBottom <= g.vh, `A-06 guide ${v.name}: the first screen is what she does (close it, Not now changes nothing, show this to someone she trusts), then Print`, JSON.stringify(g.head.slice(0, 160)));
       if (v.name === "1366x768") check(/press tab until/i.test(g.all) && /enter/i.test(g.all) && /small button/i.test(g.all), "B-04: the helper's page gives the keyboard way for the small buttons (Tab until it is outlined, then Enter)");
+      if (v.name === "1366x768") {
+        // the sheet is meant to be printed on two pages, with the menu-key way back to AurOS on it and no private mailbox
+        const sheet = await page.evaluate(() => document.querySelector(".sheet").innerText);
+        check(/came up when you wanted AurOS/i.test(sheet) && /choose the one that says AurOS/i.test(sheet) && !/@[a-z0-9-]+\.(com|org|net)/i.test(sheet), "bootfix: the printed sheet says what to do when the computer starts Windows instead of AurOS (menu key, the one that says AurOS), with no private mailbox on it");
+        const pdf = await page.pdf({ preferCSSPageSize: false });
+        const pages = (pdf.toString("latin1").match(/\/Type\s*\/Page[^s]/g) || []).length;
+        check(pages === 2, "bootfix: the printed sheet still fits two pages (a third spills the last lines)", "pages=" + pages);
+      }
       await ctx.close();
     }
   }
