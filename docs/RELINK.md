@@ -66,8 +66,9 @@ AurOS ("AurOS is still on this computer. Start it again") that re-creates the en
    a function that already does the thing". The only `BootOrder` writer in the tree is `promote()` in
    `src/aurfirst/state.c`, which is Linux code (efivarfs), carries the ordering rules (keep every entry, hidden or
    non-boot ones behind, read back, roll back on mismatch), and has its own tests. A second writer in `plat_win.c`
-   would have to repeat all of that against `SetFirmwareEnvironmentVariable`, with the plat_sim gate that now
-   guards NVRAM access relaxed for it.
+   would have to repeat all of that against `SetFirmwareEnvironmentVariable`, and would break the rule above. (The
+   "second gate" in `docs/AURBRIDGE.md` guards `src/aurstage/nvram.c` in the Linux staging build, not the Windows
+   half; it is not what stops a Windows-side writer, the written rule and review are.)
 2. *Nothing on the Windows side records "confirmed".* The answer is stamped in `/var/lib/auros` on the AurOS
    partition (`AF_CONFIRMED`), which Windows cannot read. Windows could see the partition by its GPT name and
    `\EFI\AurOS\shimx64.efi`, but not whether she said yes, nor a pending put-back. The brief asks to refuse on
