@@ -61,11 +61,18 @@ home path no longer removed|s,'s#/home/,'s#/nohome/,
 journal not capped|s/-n "\$LINES_MAX" --no-pager/--no-pager/
 network name asked for|s/-f DEVICE,TYPE,STATE //
 connection files read|s/^sec "AurOS version"/cat "$R"\/etc\/NetworkManager\/system-connections\/*; sec "AurOS version"/
-account names kept|s/BEGIN \{ np = split\(people, who, ":"\) \}/BEGIN { np = 0 }/
+account names kept|s/BEGIN \{ np = split\(people, who, ":"\);/BEGIN { np = 0;/
 usual host name removed too|s/^\[ "\$HOST" != auros \] \|\| HOST=/:/
 serial8250 label too wide|s/lab\(l, K2, "\[a-z_ #\.\\"-\]"\)/lab(l, K2, "[a-z0-9_ #.\\"-]")/
 oldest lines kept past the limit|s/tail -c "\$JOURNAL_MAX" "\$_t" \| sed 1d/head -c "$JOURNAL_MAX" "$_t"/
 interval braces in awk|s/pos = 1$/pos = 1; if (match(l, "x{1}")) pos = 1/
+saved Wi-Fi names not collected|s/NAME,TYPE connection show/NAME,TYPE connection foo/
+Wi-Fi names in range not collected|s/nmcli -t -f SSID device wifi list --rescan no/true/
+names cut as patterns, not plain text|s/\(i = index\(s, w\)\) > 0/(i = match(s, w) ? RSTART : 0) > 0/
+ssid label values no longer cut|s/^        \$0 = ssids\(\$0\)/        $0 = $0/
+wired connection names taken too|s/wireless\|wifi/wireless|wifi|ethernet/
+colon escape not undone|s/if \(c == "\\\\" && length\(s\) > 1\)/if (0)/
+header promises passwords are taken out|s/Wi-Fi passwords are never read, and/Passwords are taken out, and/
 no list of what is left out|s/WHAT IS NOT IN IT, ON PURPOSE/WHAT/
 EOF
     [ "$mfail" = 0 ] && { echo "  every check goes red when its thing is broken"; exit 0; }
@@ -111,6 +118,18 @@ while [ $# -gt 0 ]; do case "$1" in -n) n=$2; shift ;; -b) b=$2; shift ;; esac; 
   echo "2026-11-10T10:00:03 grandmas-laptop app[2]: could not open /home/grandma/Documents/PLANTED-TAXES.pdf"
   echo "2026-11-10T10:00:04 grandmas-laptop kernel: mounted 123e4567-e89b-12d3-a456-426614174000"
   echo "2026-11-10T10:00:05 grandmas-laptop kernel: wlan0: aa:bb:cc:dd:ee:ff associated"
+  echo "2026-11-10T10:00:06 h NetworkManager[1]: <info> device (wlan0): Activation: starting connection 'PLANTED-SAVED-A' (x)"
+  echo "2026-11-10T10:00:06 h wpa_supplicant[1]: wlan0: Trying to associate with SSID 'PLANTED-STRANGER-B'"
+  echo "2026-11-10T10:00:06 h wpa_supplicant[1]: wlan0: CTRL-EVENT-ASSOC-REJECT ssid=\"PLANTED-STRANGER-C\" status_code=1"
+  echo "2026-11-10T10:00:06 h NetworkManager[1]: <warn> Wifi: SSID \"PLANTED-STRANGER-D\" is hidden"
+  echo "2026-11-10T10:00:06 h NetworkManager[1]: <info> Auto-activating CONNECTION 'PLANTED-STRANGER-E' now"
+  echo "2026-11-10T10:00:06 h NetworkManager[1]: <info> scan found PLANTED-NEARBY-F and PLANTED-SAVED-A"
+  echo "2026-11-10T10:00:06 h NetworkManager[1]: <info> ssid 'PLANTED-O'Neil-G' chosen"
+  echo "2026-11-10T10:00:06 h NetworkManager[1]: <info> joined PLANT.*[ED-H ok"
+  echo "2026-11-10T10:00:06 h NetworkManager[1]: <info> PLANTEDxED-REGEX-KEPT line"
+  echo "2026-11-10T10:00:06 h NetworkManager[1]: <info> joined PLANT:COLON-I ok"
+  echo "2026-11-10T10:00:06 h NetworkManager[1]: <info> wired PLANTED-ETHERNAME-KEPT up"
+  echo '{"ssid": "PLANTED-STRANGER-J", "state": 1}'
 } | { if [ -n "$n" ]; then tail -n "$n"; else cat; fi; }
 EOF
 cat > "$BIN/dmesg" <<'EOF'
@@ -126,6 +145,13 @@ echo '#!/bin/sh
 echo "Bus 001 Device 002: ID 8087:0033 Intel LSUSB-MARKER"' > "$BIN/lsusb"
 cat > "$BIN/nmcli" <<'EOF'
 #!/bin/sh
+# the two name lists (nmcli -t escapes : with a backslash); anything asking for a secret fails
+case "$*" in
+  *secret*|*show-secrets*|*" -s"*) echo "NMCLI-SECRET-ASKED" >> "${FAKE_LOG:-/dev/null}"; exit 1 ;;
+  *"connection show"*) echo 'PLANTED-SAVED-A:802-11-wireless'; echo 'PLANT.*[ED-H:802-11-wireless'
+                       echo 'PLANT\:COLON-I:802-11-wireless'; echo 'PLANTED-ETHERNAME-KEPT:802-3-ethernet'; exit 0 ;;
+  *"wifi list"*) echo 'PLANTED-NEARBY-F'; echo '--'; echo ''; exit 0 ;;
+esac
 case "$*" in *-f*) echo "wlan0:wifi:connected" ;; *) echo "wlan0:wifi:connected:PLANTED-SSID-HomeNet" ;; esac
 EOF
 echo '#!/bin/sh
@@ -198,12 +224,19 @@ for m in OSRELEASE-MARKER UNAME-MARKER KERNEL-LOG-MARKER LSPCI-MARKER LSUSB-MARK
 done
 
 echo "  privacy"
+for m in PLANTED-SAVED-A PLANTED-STRANGER-B PLANTED-STRANGER-C PLANTED-STRANGER-D PLANTED-STRANGER-E PLANTED-NEARBY-F \
+         "Neil-G" "PLANT.\*\[ED-H" "PLANT:COLON-I" PLANTED-STRANGER-J; do
+    has "$m" && bad "no Wi-Fi name: it must NOT hold: $m" || ok "no Wi-Fi name: it does not hold: $m"
+done
+has "PLANTEDxED-REGEX-KEPT" && ok "a name with .*[ is plain text (a look-alike line is kept)" || bad "a name with .*[ is plain text"
+has "PLANTED-ETHERNAME-KEPT" && ok "only Wi-Fi connection names are taken (a wired one is kept)" || bad "only Wi-Fi connection names are taken"
+has "wlan0: Trying to associate with SSID '\[removed\]'" && ok "...the line is there, with the name removed" || bad "the SSID line is marked removed"
 for m in PLANTED-WIFI-PASSWORD-1 PLANTED-SERIAL-2 PLANTED-SERIAL-3 PLANTED-TAXES 123e4567 aa:bb:cc:dd:ee:ff \
          PLANTED-CONF-PSK PLANTED-JOURNAL-SERIAL granny Quill PLANTED-SSID NM-FILE-MUST-NEVER-BE-READ grandmas-laptop; do
     has "$m" && bad "it must NOT hold: $m" || ok "it does not hold: $m"
 done
 has "psk= \[removed\]" && ok "...the psk line is there, with its value removed" || bad "the psk line is marked removed"
-has "WHAT IS NOT IN IT" && has "no Wi-Fi names or passwords" && ok "the top says what is and is not in it" || bad "the top says what is not in it"
+has "WHAT IS NOT IN IT" && has "Wi-Fi passwords are never read" && has "names of Wi-Fi networks" && ok "the top says what is and is not in it" || bad "the top says what is not in it"
 
 echo "  what must survive the filter"
 has "serial8250: ttyS0 at I/O 0x3f8 SERIAL8250-MARKER" && ok "a driver named serial8250 is not mistaken for a serial number" || bad "serial8250 line is kept"

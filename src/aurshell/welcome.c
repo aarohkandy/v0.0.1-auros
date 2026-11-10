@@ -948,7 +948,7 @@ static int body_of(int page, int partial, const char *lines[3])
                               : "It needs room for them. Anything already on the stick stays there.";
         break;
     case W_STICK_PICK:
-        lines[n++] = W.report ? "Nothing on the stick is deleted. Passwords are taken out, but give it only to someone you trust."
+        lines[n++] = W.report ? "Nothing on the stick is deleted. Wi-Fi passwords are never read, but give it only to someone you trust."
                               : "Nothing on the stick is deleted.";
         break;
     case W_STICK_SAVING:

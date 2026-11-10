@@ -16,15 +16,22 @@
 #
 #  PRIVACY (the same bar as src/aurbridge/hwinv.h): the file is something
 #  a person photographs, mails or attaches to a public bug. So
-#    - NetworkManager's connection files are never opened, and the device
-#      list is asked for without the network's name;
+#    - NetworkManager's connection files are never opened and no Wi-Fi
+#      password is ever asked for; the device list is asked for without the
+#      network's name;
+#    - the names of the Wi-Fi networks this PC knows or can see (from nmcli's
+#      list of saved connections and of networks in range) are removed from
+#      every line, as plain text; so is the quoted value after an ssid /
+#      connection label, whatever the name;
 #    - lines that carry a password, key or secret lose everything after
 #      the label; so do serial numbers;
 #    - UUIDs, MAC addresses, the people's names and anything under
 #      /home or the media folders are removed from every line;
 #    - the top of the file says what is and is not in it.
 #  It is a filter on the way out, not a promise about what a program
-#  chose to log; the header says that too.
+#  chose to log; the header says that too. What can still slip through: a
+#  Wi-Fi name of under 3 characters, or one written without quotes or in hex
+#  by a program, that nmcli did not list.
 # ═══════════════════════════════════════════════════════════════════
 set -u
 # Fixed; AUROS_REPORT_PATH / AUROS_REPORT_ROOT are for
@@ -68,12 +75,29 @@ HOST=$(hostname 2>/dev/null || cat "$R/etc/hostname" 2>/dev/null || true)
 # The login names and real names of the people's accounts (uid 1000 and up):
 # "New session 3 of user NAME" is in nearly every journal.
 PEOPLE=$(getent passwd 2>/dev/null | awk -F: '$3 >= 1000 && $3 < 60000 { print $1; split($5, g, ","); if (g[1] != "") print g[1] }' | tr '\n' ':')
+# Wi-Fi names: saved Wi-Fi connections (NAME of a wifi row) and networks in range.
+# Only names are asked for, never a secret, and no file of NetworkManager's is opened.
+# nmcli -t escapes : and \ with a backslash; one name per line, longest first.
+NAMES=$(mktemp "${TMPDIR:-/tmp}/stickreport.names.XXXXXX") || exit 1
+trap 'rm -f "$NAMES" "${PART:-}"' EXIT
+{
+    nmcli -t -f NAME,TYPE connection show 2>/dev/null | awk '
+        { i = 0; for (k = length($0); k > 0; k--) if (substr($0, k, 1) == ":" && substr($0, k - 1, 1) != "\\") { i = k; break }
+          if (i > 1 && substr($0, i + 1) ~ /wireless|wifi/) print substr($0, 1, i - 1) }'
+    nmcli -t -f SSID device wifi list --rescan no 2>/dev/null
+} | awk '
+    { s = $0; o = ""
+      while (length(s)) { c = substr(s, 1, 1)
+        if (c == "\\" && length(s) > 1) { s = substr(s, 2); c = substr(s, 1, 1) }
+        o = o c; s = substr(s, 2) }
+      if (o != "" && o != "--" && !(o in seen)) { seen[o] = 1; print length(o) "\t" o } }' |
+    sort -t "$(printf '\t')" -k1,1nr | cut -f2- > "$NAMES"
 KEYS='psk|wep-key|passw|passphrase|secret|private-key|rescue[ -]?(code|key)|recovery[ -]?key|api-?key'
 # serial and token only count as a label when followed by words, not digits:
 # "serial8250: ttyS0 is a 16550A" is the kernel naming a driver, not a number.
 KEYS2='serial|token'
 redact() {
-    awk -v host="$HOST" -v people="$PEOPLE" -v K="$KEYS" -v K2="$KEYS2" '
+    awk -v host="$HOST" -v people="$PEOPLE" -v K="$KEYS" -v K2="$KEYS2" -v nf="$NAMES" '
     # the end of a label (K) followed within 16 characters of cls by = or : ; 0 if none.
     # No interval braces here: older mawk reads them as text and the rule would silently stop working.
     function lab(l, K, cls,   pos, st, en, rest) {
@@ -92,10 +116,27 @@ redact() {
         while ((i = index(s, w)) > 0) { out = out substr(s, 1, i - 1) "[removed]"; s = substr(s, i + length(w)) }
         return out s
     }
-    BEGIN { np = split(people, who, ":") }
+    # the quoted value after an ssid / essid / connection label, in any case: ssid 'X', SSID="X", "ssid": "X"
+    function ssids(s,   l, o, st, q, v, e) {
+        l = tolower(s); o = ""
+        while (match(l, "(ssid|connection)[\"\047]?[ =:]*[\"\047]")) {
+            st = RSTART + RLENGTH; q = substr(l, st - 1, 1)
+            o = o substr(s, 1, st - 1); s = substr(s, st); l = substr(l, st); e = 0
+            # the closing quote is the first one not followed by a letter or digit (a name like O-Neil stays whole)
+            for (v = 1; v <= length(s); v++)
+                if (substr(s, v, 1) == q && substr(s, v + 1, 1) !~ /[A-Za-z0-9]/) { e = v; break }
+            if (!e) { s = ""; o = o "[removed]"; break }
+            o = o "[removed]"; s = substr(s, e); l = substr(l, e)
+        }
+        return o s
+    }
+    BEGIN { np = split(people, who, ":"); nn = 0
+            while ((getline line < nf) > 0) if (line != "") names[++nn] = line }
     {
         if (host != "" && length(host) > 3) $0 = cut($0, host)
         for (j = 1; j <= np; j++) $0 = cut($0, who[j])
+        for (j = 1; j <= nn; j++) $0 = cut($0, names[j])
+        $0 = ssids($0)
         # JSON: "disk_serial": "x" goes, the rest of the line stays
         l = tolower($0)
         while (match(l, "\"[a-z0-9_ -]*(" K "|" K2 ")[a-z0-9_ -]*\" *: *\"[^\"]*\"")) {
@@ -157,7 +198,7 @@ D=$(date +%Y-%m-%d 2>/dev/null || echo undated)
 NAME="AurOS-report-$D.txt"
 [ ! -e "$T/$NAME" ] || NAME="AurOS-report-$D-$(date +%H%M%S).txt"
 PART="$T/.$NAME.part"
-trap 'rm -f "$PART"' EXIT
+trap 'rm -f "$NAMES" "$PART"' EXIT
 
 {
 cat <<EOF
@@ -172,14 +213,16 @@ WHAT IS IN IT
   - the AurOS version and the kernel version
 
 WHAT IS NOT IN IT, ON PURPOSE
-  - no Wi-Fi names or passwords, and none of the files that hold them
+  - Wi-Fi passwords are never read, and none of the files that hold them are opened
+  - the names of Wi-Fi networks this computer has saved or can see are replaced
+    with [removed]
   - no serial numbers, no disk or network-card identifiers
   - no file names, and nothing from the folders under /home
   - the names of the people who use this computer are replaced with [removed];
     so is this computer's name, if it was changed from the usual one
 Lines that name a password, key, secret or serial lose everything after the label.
-A program can still write something private in its own words in a system message;
-read it through before putting it anywhere public.
+A program can still write something private in its own words in a system message
+(a very short Wi-Fi name, for one); read it through before putting it anywhere public.
 EOF
 
 sec "AurOS version"
