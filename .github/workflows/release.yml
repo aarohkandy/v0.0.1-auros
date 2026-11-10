@@ -296,7 +296,7 @@ jobs:
           { echo "tag=$TAG"; echo "signed=$SIGNED"; echo "setup_sha256=$setup"; echo "image_sha256=$img"; echo "image_bytes=$bytes"; } >> "$GITHUB_OUTPUT"
           run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RID"
           if [ "$SIGNED" = true ]; then
-            site="https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}"
+            site="https://${{ vars.AUROS_SITE || '1os.vercel.app' }}"
             SIGLINE="AurOS-Setup.exe and the installer it carries are both signed. Free code signing provided by SignPath.io, certificate by SignPath Foundation. Code signing policy: $site/code-signing.html . The signed inner installer was embedded and hashed into a rebuilt bootstrap before that outer file was signed; \`AurOS-Setup-signing-provenance.txt\` records and verifies all four byte transitions. Windows may still ask a new file a question or two."
           else
             SIGLINE="AurOS-Setup.exe is not signed yet. Windows asks before it starts it: in Edge, *Keep* and then *Keep anyway*; on the blue SmartScreen panel, *More info* and then *Run anyway*. On a PC with Smart App Control on, that has to be switched off first."

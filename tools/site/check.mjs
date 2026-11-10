@@ -359,6 +359,12 @@ for (const v of [
 //     floors -- the person reading it may be the one who could not read
 //     the installer either.
 {
+  // D12: unsigned today, signing planned with no date. Never "applying", never "never".
+  for (const f of ["code-signing.html", "advanced.html"]) {
+    const t = fs.readFileSync(path.join(SITE, f), "utf8").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    check(/no signature yet/i.test(t) && /plans? to/i.test(t) && !/is applying|never will|we plan to apply/i.test(t),
+      f + ": signing text says unsigned today and planned, no date (D12)");
+  }
   const adv = path.join(SITE, "advanced.html");
   check(fs.existsSync(adv), "advanced.html: the page the installer names exists");
   const front = fs.readFileSync(path.join(SITE, "index.html"), "utf8");

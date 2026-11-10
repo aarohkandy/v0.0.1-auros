@@ -47,12 +47,12 @@ against the desktop's own code.
 ## 2. On the website
 
 - The front page, with pictures of every step of putting AurOS on a
-  computer: <https://aarohkandy.github.io/v0.0.1-auros/>
+  computer: <https://1os.vercel.app/>
 - A page to print for whoever helps you:
-  <https://aarohkandy.github.io/v0.0.1-auros/guide.html>
+  <https://1os.vercel.app/guide.html>
 - For someone who knows computers (when the installer says AurOS can't
   go on a computer because of how it starts, or Intel's storage setting):
-  <https://aarohkandy.github.io/v0.0.1-auros/advanced.html>
+  <https://1os.vercel.app/advanced.html>
 
 ## 3. Asking us
 

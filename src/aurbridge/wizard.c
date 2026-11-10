@@ -3416,8 +3416,8 @@ static int page_ready(int x, int y, int w)
  *  4 · PROGRESS
  *
  *  One bar, one sentence, and how long is left -- measured, not
- *  guessed, once there is enough to measure. Then "Restart now", and
- *  a restart by itself after a minute she can watch count down.
+ *  guessed, once there is enough to measure. Then "Restart now" or
+ *  "Restart later" (a minimize; it arms nothing).
  * ═══════════════════════════════════════════════════════════════════ */
 
 /* How much of the work before the restart each phase is. The download
