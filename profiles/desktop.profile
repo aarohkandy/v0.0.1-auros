@@ -87,6 +87,15 @@ keyboard_variant=""
 # and they are the difference between "it printed" and "it printed
 # nothing and said nothing".
 #
+# TWO KERNELS, ON PURPOSE. linux-image-generic-hwe-24.04 is the 7.0 kernel
+# (Canonical-signed, noble-updates): Wi-Fi, graphics and sound for PCs made
+# since about 2023 that 6.8 has no driver for. It is the newest, so
+# build/kernel-version, build/mkimage and build/staging all start it.
+# linux-image-generic stays: it is the 6.8 kernel, kept current by security
+# updates, and bootchain keeps it as "the kernel before" (auros-previous), so a
+# 7.0 that does not start on some PC is one menu entry from a 6.8 that does.
+# docs/handoff/streams/HW.md "Finding 1" has the evidence and what CI must prove.
+#
 # FIRMWARE, BY THE PIECE. `linux-firmware` in noble-updates is a
 # metapackage over eighteen pieces, and four of them are for machines
 # that are not in anybody's house: switch chips (mellanox-spectrum,
@@ -132,6 +141,7 @@ keyboard_variant=""
 #   without one it is "found" and prints nothing. 0.6 MB together. HP
 #   (hpcups) and Canon/Epson photo printers (gutenprint) were already here.
 packages_hardware="linux-firmware-minimal linux-image-generic
+                   linux-image-generic-hwe-24.04
                    linux-firmware-amd-graphics linux-firmware-amd-misc
                    linux-firmware-intel-graphics linux-firmware-intel-misc
                    linux-firmware-intel-wireless

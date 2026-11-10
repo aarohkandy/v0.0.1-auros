@@ -87,7 +87,7 @@ driver), `sane-airscan`/`sane-utils` (scanners), `printer-driver-foo2zjs`,
 
 ## Findings the lead should hear
 
-1. **The image ships the 6.8 GA kernel; the HWE kernel is 7.0 today**
+1. **The image shipped the 6.8 GA kernel; the HWE kernel is 7.0 today (now shipped too, see DECISION below)**
    (`linux-image-generic-hwe-24.04`, one 166 MB modules package). Measured with
    the same generator on both (not installed, only read): 7.0 gains PCI ids
    for 12 Wi-Fi chips (Realtek RTL8922AE Wi-Fi 7, RTL8852BTE, MediaTek
@@ -103,6 +103,68 @@ driver), `sane-airscan`/`sane-utils` (scanners), `printer-driver-foo2zjs`,
    prebuilt Nvidia kernel modules per kernel (`linux-modules-nvidia-580-7.0.0-38-generic`
    + `nvidia-driver-580`), the way to give Nvidia machines their real driver
    with Secure Boot on; today they get nouveau ("slow games").
+   **DECISION (2026-11-10, lane hwe): YES, ship both.** The profile now installs
+   `linux-image-generic-hwe-24.04` (7.0) beside `linux-image-generic` (6.8). 7.0
+   is the newest, so `build/kernel-version` (image and staging) starts it; 6.8 stays,
+   security-updated, as bootchain's `auros-previous` entry ("the kernel before").
+   Evidence, read from noble-updates metadata and the real debs in a
+   `ubuntu:24.04` container on homebase (nothing built):
+   - Both metas resolve together (`apt-get -s`, `--no-install-recommends`): 17
+     packages, 7.0.0-42 (`~24.04.1`, noble-updates and noble-security) beside
+     6.8.0-149. `linux-image-7.0.0-42-generic` is the SIGNED image package (the
+     other is `linux-image-unsigned-*`); Canonical signs HWE the same as GA, so
+     the shim -> grub -> kernel chain is unchanged. (Whether the signature is
+     accepted by Secure Boot is for the KVM suite below, not proved here.)
+   - Cost: +17 MB (image) +166 MB (modules) in downloads, ~+177 MB installed,
+     plus one more initramfs in /boot (the 6.8 kernel and its modules stay).
+     `build/mkimage` sizes the disk from the rootfs plus 1536 MB slack, so no
+     constant moves. HWE has no `-extra` package: 7.0 folds it into
+     `linux-modules`.
+   - Staging follows by itself: every directory and driver `build/staging` copies
+     or checks by name (nvme, ahci, mmc_block, sdhci-pci, vmd, ntfs3, uas,
+     usb-storage; dirs ata nvme scsi usb/storage usb/host usb/common block
+     pci/controller mmc virtio fs/ext4(built in) fs/fat fs/nls fs/ntfs3 lib crypto)
+     exists in 7.0.0-42 (listed from the package; in 6.8 mmc, vmd and ntfs3 came
+     from `-extra`, in 7.0 they are in the main package).
+   - Userspace is already new enough for the new graphics: noble-updates mesa is
+     25.2. Firmware is the weak side: linux-firmware is still `20240318` + SRUs,
+     so a 2025 chip can get a driver and no firmware. That is exactly what the
+     `fw` field in compat.json records, so the matcher says "won't work yet"
+     for it rather than promising.
+   - The lost ids do not matter: 07aa:0044/0047 are the RTL8192E PCI card (Corega
+     CG-WLPCIGN), whose `r8192e_pci` staging driver 7.0 dropped; compat.json
+     already has it `fw: missing` (three firmware files we do not ship), i.e.
+     "won't work yet" both before and after. 8086:272f is a bare Intel ID that
+     6.8's `iwlwifi` lists and 7.0's does not; I found no retail card for it and
+     could not confirm what it is without hardware. The only false promise
+     possible is that, and only until compat.json is regenerated on the 7.0 image
+     (the matcher is conservative about everything 7.0 gained, so a stale file
+     under-promises there).
+   - `gen-compat.py` took `sorted(os.listdir)[-1]` as the kernel (text order); with two
+     kernels it now takes the newest by version, the same rule as
+     `build/kernel-version`, and records `linux-image-<kver>`'s version as
+     `kernel_package` (before: the meta's, which is the wrong kernel once two exist).
+   - NOT done: `hw/compat.json` still says 6.8.0-147. `tools/hw/regen.sh` refuses (homebase
+     has 20 GB free, rule is 33) and a full regen is more than the 2 GB budget
+     of this lane; `hw/compat-hwe-wifi.json` (7.0, Wi-Fi only) already exists. CI
+     must run `python3 -I tools/hw/gen-compat.py work/forge/desktop/rootfs` and
+     `tools/hw/gen-header.py`, commit the result, and `HW_ROOTFS=... hwtest.sh`
+     must then say "is what this image gives".
+   **What the release CI must prove on the built image** (none of this ran here):
+   1. `build/kernel-version` on the rootfs prints 7.0.x and `/boot` holds both
+      `vmlinuz-7.0*` and `vmlinuz-6.8*` with their initrds; grub.cfg `auros` is 7.0
+      and `auros-previous` is 6.8; staging.efi/-vmlinuz are 7.0 and share its modules.
+   2. Secure Boot ON in OVMF (the signed 7.0 kernel through shim and grub, and
+      staging through shim): the whole KVM suite as usual, plus a boot with the
+      7.0 entry deliberately broken that comes back up on 6.8 (rollbacktest).
+   3. `mkimage` verify: initramfs for both kernels, disk not out of slack; record
+      image size and boot time before and after.
+   4. `hwtest` with `HW_ROOTFS` (as above) and `sticks.py`; `modinfo` for the
+      graphics, sound and Wi-Fi drivers resolves in 7.0.
+   5. Put-Windows-back and the Windows-first-boot tests on 7.0 (ntfs3 changed
+      between 6.8 and 7.0).
+   6. Still unproven, needs real PCs: any 2023+ laptop's Wi-Fi, graphics, sound,
+      suspend. The Nvidia proprietary driver is a separate step (not in this change).
 2. USB printers: with no `ipp-usb` in the image a USB printer not in the HP/
    Gutenprint lists is "won't work yet" (over Wi-Fi it is fine). WP-25 already
    lists `ipp-usb`; the verdict flips by itself when it lands.

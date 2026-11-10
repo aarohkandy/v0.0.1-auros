@@ -301,8 +301,10 @@ Revisit when S4's TPM re-seal exists, and possibly then fwupd for dbx only.
 - Packages from `universe` (in the image: e.g. `earlyoom`, `zram-tools`) get
   security fixes only on a best-effort basis from the community. Keep the
   image's universe list short. Each one is a choice.
-- The kernel is `linux-image-generic` (the 6.8 series), supported for 24.04's
-  whole life.
+- The kernels are `linux-image-generic-hwe-24.04` (7.0 today, started by default)
+  and `linux-image-generic` (the 6.8 series, kept as the kernel before it), both
+  security-updated. 6.8 is supported for 24.04's whole life; the HWE kernel
+  moves to newer series over time (Ubuntu's rule, not checked here).
 - Ubuntu 26.04 LTS came out in April 2026. Ubuntu opens upgrades from 24.04
   with 26.04.1 (August 2026). 26.04's standard support runs to April 2031.
 - **Plan** (not built; nobody is stranded before April 2029):

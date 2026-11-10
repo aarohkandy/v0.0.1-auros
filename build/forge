@@ -582,9 +582,9 @@ purge_snap_leftovers() {
 # the four server pieces are removed here -- in ONE apt call that also
 # installs linux-firmware-minimal, so the kernel's dependency on
 # "linux-firmware" stays satisfied and apt has no reason to take
-# linux-image-generic with them. Checked afterwards anyway: a removal
-# that took the kernel meta with it would be an image that never takes
-# another kernel update.
+# linux-image-generic (6.8) or linux-image-generic-hwe-24.04 (7.0) with
+# them. Checked afterwards anyway: a removal that took a kernel meta with it
+# would be an image that never takes another kernel update.
 FW_SERVER="linux-firmware-mellanox-spectrum linux-firmware-marvell-prestera
            linux-firmware-netronome linux-firmware-qlogic"
 pkg_installed() {
@@ -607,8 +607,10 @@ trim_server_firmware() {
     else
         warn "could not remove data-centre firmware:$have"
     fi
-    pkg_installed linux-image-generic || die "removing$have took linux-image-generic
+    for k in linux-image-generic linux-image-generic-hwe-24.04; do
+        pkg_installed $k || die "removing$have took $k
      with it; this image would never take another kernel update."
+    done
 }
 
 # ── the store, if this build wants one ────────────────────────────
