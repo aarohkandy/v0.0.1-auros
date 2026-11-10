@@ -146,12 +146,28 @@ driver), `sane-airscan`/`sane-utils` (scanners), `printer-driver-foo2zjs`,
      kernels it now takes the newest by version, the same rule as
      `build/kernel-version`, and records `linux-image-<kver>`'s version as
      `kernel_package` (before: the meta's, which is the wrong kernel once two exist).
-   - NOT done: `hw/compat.json` still says 6.8.0-147. `tools/hw/regen.sh` refuses (homebase
-     has 20 GB free, rule is 33) and a full regen is more than the 2 GB budget
-     of this lane; `hw/compat-hwe-wifi.json` (7.0, Wi-Fi only) already exists. CI
-     must run `python3 -I tools/hw/gen-compat.py work/forge/desktop/rootfs` and
-     `tools/hw/gen-header.py`, commit the result, and `HW_ROOTFS=... hwtest.sh`
-     must then say "is what this image gives".
+   - `hw/compat.json` is only PARTLY for 7.0 (`tools/hw/regen.sh` refuses: homebase has
+     20 GB free, rule is 33). Its Wi-Fi/bus entries that `hw/compat-hwe-wifi.json`
+     (7.0.0-38) shows 7.0 no longer drives were removed (iwlwifi 8086:272f, the
+     `r8712u` staging driver, which said "works"); what 7.0 gained is NOT promised
+     (a "works" for e.g. RTL8812AU needs a real stick first, see CAMPAIGN.md). The
+     rest is still 6.8.0-147. It can under-promise, and the build now REFUSES to
+     over-promise: `build.yml` runs `gen-compat.py ROOTFS --check-promises` on the
+     forged rootfs before the installer is built, and fails if the committed table
+     says "works" for a PCI/USB id no module of the image's kernel claims.
+     `kernelversiontest.sh` proves both halves. A full regen is still wanted:
+     `python3 -I tools/hw/gen-compat.py work/forge/desktop/rootfs`, then
+     `gen-header.py`, commit, `HW_ROOTFS=... hwtest.sh` says "is what this image gives".
+   - The "one menu entry from 6.8" claim: `bootchain` now picks the previous entry
+     from the newest OLDER kernel SERIES (6.8 under 7.0) before any point update of
+     the newest series, so it stays 6.8 after 7.0.0-43 installs (the running kernel
+     counts only inside that choice). With only one series installed the old rule
+     (running kernel, else the next newest) is unchanged. Proven in
+     `kernelversiontest.sh` with 7.0.0-43, 7.0.0-42 and 6.8. After 6.8 is gone
+     (nothing prunes it; Ubuntu keeps it as the linux-image-generic dependency) the
+     fallback is another 7.0.
+   - 6.8 as fallback keeps ntfs3, mmc and vmd: `linux-image-generic` Depends on
+     `linux-modules-extra-6.8.0-149-generic` (apt-cache depends, noble, homebase container).
    **What the release CI must prove on the built image** (none of this ran here):
    1. `build/kernel-version` on the rootfs prints 7.0.x and `/boot` holds both
       `vmlinuz-7.0*` and `vmlinuz-6.8*` with their initrds; grub.cfg `auros` is 7.0
@@ -165,7 +181,13 @@ driver), `sane-airscan`/`sane-utils` (scanners), `printer-driver-foo2zjs`,
       graphics, sound and Wi-Fi drivers resolves in 7.0.
    5. Put-Windows-back and the Windows-first-boot tests on 7.0 (ntfs3 changed
       between 6.8 and 7.0).
-   6. Still unproven, needs real PCs: any 2023+ laptop's Wi-Fi, graphics, sound,
+   6. The staging pair (`auros-staging.img` + vmlinuz) is at most 40 MB (`build/staging`
+      now dies above `STAGING_MAX_MB`; 6.8 was about 28 MB) and the log line says the
+      real size. The ESP the "encrypt this drive" step (lockctl prepare: all
+      `/boot/vmlinuz-*` + `initrd.img-*` plus 32 MB) needs with two kernels, and the
+      Secure Boot signature of `vmlinuz-7.0*` (`sbverify --cert` against Canonical's
+      key; only the certificate string was seen, not verified).
+   7. Still unproven, needs real PCs: any 2023+ laptop's Wi-Fi, graphics, sound,
       suspend. The Nvidia proprietary driver is a separate step (not in this change).
 2. USB printers: with no `ipp-usb` in the image a USB printer not in the HP/
    Gutenprint lists is "won't work yet" (over Wi-Fi it is fine). WP-25 already

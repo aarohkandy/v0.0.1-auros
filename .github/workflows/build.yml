@@ -216,6 +216,15 @@ jobs:
           ls -la out out/manifests
           df -h /
 
+      - name: hw/compat.json promises nothing the image's kernel lacks
+        run: |
+          # The installer's PC matcher is built from the committed hw/compat.json
+          # (build/aurbridge, next). A table made for another kernel may say
+          # less than the image can do; it must never say "works" for an id the
+          # image's kernel has no driver for.
+          sudo python3 -I tools/hw/gen-compat.py work/forge/desktop/rootfs --check-promises
+          sudo python3 -I tools/hw/gen-compat.py work/forge/desktop/rootfs --check | tee /tmp/compat-check.txt || true
+
       - name: what the image says went wrong while building it
         run: |
           W=work/forge/desktop/rootfs/etc/auros/build-warnings

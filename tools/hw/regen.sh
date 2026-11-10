@@ -6,7 +6,7 @@
 #   sh tools/hw/regen.sh --reuse NAME    a container that already has them (saves the download)
 #
 # Which packages: `packages_hardware` in profiles/desktop.profile, plus the
-# kernel the image gets (linux-image-generic). On CI the unit job has the real
+# kernels the image gets (linux-image-generic and linux-image-generic-hwe-24.04: gen-compat reads the newest). On CI the unit job has the real
 # rootfs instead: `python3 -I tools/hw/gen-compat.py work/forge/desktop/rootfs`.
 # Disk rule (docs/handoff/FIELD-MANUAL.md section 3): refuses when fewer than
 # 30 GB would be left.

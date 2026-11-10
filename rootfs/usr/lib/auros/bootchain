@@ -163,6 +163,11 @@ def natural_key(s):
     return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", s)]
 
 
+def series(v):
+    """6.8.0-149-generic -> 6.8: the part a point update does not change."""
+    return ".".join(v.split(".")[:2])
+
+
 def kernels(root):
     """Kernel versions with BOTH a vmlinuz and an initrd, newest first.
     A kernel without its initrd is half installed (dpkg runs the hook
@@ -294,7 +299,10 @@ def render_menu(root, uuid=None, running=None, fresh_lock=False):
     if len(ks) > 1:
         # The kernel this machine is running has been seen to work; the
         # one before the newest has only been seen to install.
-        back = running if running in ks[1:] else ks[1]
+        # An older SERIES (6.8 under 7.0) beats a point update of the newest
+        # series: a regression in 7.0 is in 7.0.0-43 and 7.0.0-42 alike.
+        old = [k for k in ks[1:] if series(k) != series(ks[0])] or ks[1:]
+        back = running if running in old else old[0]
         prev = PREVIOUS.format(v=back, u=uuid)
     out = (t.replace("@ROOT_UUID@", uuid).replace("@KVER@", ks[0])
             .replace("@THEME@", theme).replace("@PREVIOUS@", prev)

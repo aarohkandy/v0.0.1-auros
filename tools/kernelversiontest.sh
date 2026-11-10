@@ -85,6 +85,15 @@ if python3 -c 'import cryptography' 2>/dev/null; then
       grep -A1 -- '--id auros-previous' "$cfg" | grep -q 'vmlinuz-6.14.0-30-generic'; } \
         && ok "the start-up menu starts 7.0 and keeps the next kernel as the fallback" \
         || bad "the start-up menu starts 7.0 and keeps the next kernel as the fallback"
+    # After the first 7.0 point update the fallback must still be 6.8, even
+    # when the running kernel is the older 7.0 (it is the 7.0 series that
+    # may be the problem on her PC).
+    rm -f "$two/boot/vmlinuz-6.14.0-30-generic" "$two/boot/initrd.img-6.14.0-30-generic"
+    : > "$two/boot/vmlinuz-7.0.0-43-generic"; : > "$two/boot/initrd.img-7.0.0-43-generic"
+    python3 rootfs/usr/lib/auros/bootchain menu --root "$two" --running 7.0.0-42-generic >/dev/null 2>&1 || true
+    grep -A1 -- '--id auros-previous' "$cfg" | grep -q 'vmlinuz-6.8.0-149-generic' \
+        && ok "after a 7.0 point update the fallback is still 6.8" \
+        || bad "after a 7.0 point update the fallback is still 6.8"
 else
     printf '    %-62s skipped (no python3-cryptography here)\n' "the start-up menu starts 7.0 and keeps the next kernel as the fallback"
 fi
@@ -96,9 +105,28 @@ case "$profile_kernels" in *" linux-image-generic "*) ga=1 ;; *) ga=0 ;; esac
 [ "$hwe$ga" = 11 ] \
     && ok "the desktop profile installs the 7.0 HWE kernel and keeps 6.8" \
     || bad "the desktop profile installs the 7.0 HWE kernel and keeps 6.8"
-grep -q 'for k in linux-image-generic linux-image-generic-hwe-24.04' build/forge \
-    && ok "the forge refuses an image that lost either kernel" \
-    || bad "the forge refuses an image that lost either kernel"
+# run the forge's own loop with a stub for "installed": it must die when either is missing
+loop=$(sed -n '/^    for k in linux-image-generic linux-image-generic-hwe-24.04; do/,/^    done/p' build/forge)
+for gone in none linux-image-generic linux-image-generic-hwe-24.04; do
+    if ( die() { exit 9; }; pkg_installed() { [ "$1" != "$gone" ]; }; have=x; eval "$loop" ) >/dev/null 2>&1; then r=0; else r=$?; fi
+    if [ "$gone" = none ]; then want=0; else want=9; fi
+    [ "$r" = "$want" ] \
+        && ok "the forge's kernel check, with $gone missing: exit $want" \
+        || bad "the forge's kernel check, with $gone missing: exit $want"
+done
+
+# the hardware table may under-promise but never promise what the kernel lacks
+gc='import importlib.util as u,json,sys
+s=u.spec_from_file_location("g","tools/hw/gen-compat.py"); m=u.module_from_spec(s); s.loader.exec_module(m)'
+python3 -I -c "$gc
+c=json.load(open('hw/compat.json')); w=json.load(open('hw/compat-hwe-wifi.json'))
+assert m.promises_lost({'modules':{'iwlwifi':{'fw':'ok','pci':'8086:272f 8086:1'}}}, {'modules':{'iwlwifi':{'pci':'8086:1'}}}) == ['iwlwifi pci id 8086:272f']
+assert m.promises_lost({'modules':{'a':{'fw':'none','pci':'1:2'}}}, {'modules':{'b':{'pci':'1:2'}}}) == []
+assert m.promises_lost({'modules':{'a':{'fw':'missing','pci':'1:2'}}}, {'modules':{}}) == []
+sub={'modules':{k:v for k,v in c['modules'].items() if v['cat'] in ('wifi','bus')}}
+sys.exit(1 if m.promises_lost(sub, w) else 0)" \
+    && ok "no Wi-Fi id is promised that the 7.0 kernel does not drive" \
+    || bad "no Wi-Fi id is promised that the 7.0 kernel does not drive"
 
 refs=$(grep -l 'build/kernel-version' build/staging build/mkimage | wc -l | tr -d ' ')
 [ "$refs" = 2 ] \

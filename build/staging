@@ -626,6 +626,16 @@ SZ=$(du -h "$OUT/auros-staging$SUF.img" | cut -f1)
 # that gets discovered on somebody's laptop.
 cp -a "$RFS/boot/vmlinuz-$KVER" "$OUT/auros-staging$SUF-vmlinuz"
 
+# The pair travels inside the installer and is written next to Windows
+# (about 28 MB on the 6.8 kernel, see build/aurbridge). A newer kernel's
+# bigger modules must show up here, in the build, not on a small disk.
+PAIR_B=$(( $(wc -c < "$OUT/auros-staging$SUF.img") + $(wc -c < "$OUT/auros-staging$SUF-vmlinuz") ))
+PAIR_MAX_MB="${STAGING_MAX_MB:-40}"
+note "staging kernel $KVER: image + kernel $((PAIR_B / 1048576)) MB (limit $PAIR_MAX_MB)"
+[ "$PAIR_B" -le $((PAIR_MAX_MB * 1048576)) ] \
+    || die "the staging environment is $((PAIR_B / 1048576)) MB, over $PAIR_MAX_MB MB;
+     it would not fit the space the installer counts for it"
+
 # AND THE SIGNED WAY IN. Started directly, this kernel is refused by any
 # firmware with Secure Boot on: it is signed by Canonical, and firmware
 # trusts Microsoft. AurBridge therefore starts it through the image's own
