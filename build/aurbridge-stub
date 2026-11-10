@@ -45,7 +45,7 @@ printf '1 24 "%s"\n#include "aurbridge-ident.rc"\n300 RCDATA "%s"\n' \
 
 STUB_FLAGS="-O2 -mwindows -nostdlib -nostartfiles -ffreestanding -fno-builtin -fno-stack-protector \
     -fno-tree-loop-distribute-patterns -fno-asynchronous-unwind-tables \
-    -Wl,-e,stub_start -Wl,--subsystem,windows -Wl,--dynamicbase,--nxcompat,--high-entropy-va"
+    -Wl,-e,stub_start -Wl,--subsystem,windows -Wl,--dynamicbase,--nxcompat,--high-entropy-va,--no-insert-timestamp"
 # shellcheck disable=SC2086
 "$CC" $STUB_FLAGS -DCHILD_SHA256="\"$CHILD_SHA\"" -o "$OUTER" \
     "$SRC/stub/stub.c" "$RES" -lkernel32 || die "the stub did not build"
