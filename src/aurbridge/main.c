@@ -165,7 +165,8 @@ static int gapselftest(int argc, char **argv)
     /* NOT THE COMPUTER'S OWN DISK, whatever number was typed. */
     static pf_report r;
     pf_run(&r);
-    if (r.system_disk == disk)
+    /* Unknown (-1) refuses too: a disk nobody can rule out may be hers. */
+    if (r.system_disk < 0 || r.system_disk == disk)
         return st_fail("refusing: that is the disk Windows is running from", NULL);
 
     plat_disk dd[16];
