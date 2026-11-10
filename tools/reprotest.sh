@@ -27,7 +27,8 @@ trap 'rm -rf "$T"' EXIT HUP INT TERM
 build_one() { # name  strip-flag(0|1)
     d="$T/$1/deeper-$1/auros"
     mkdir -p "$d"
-    tar -C "$ROOT" --exclude=./.git --exclude=./out --exclude=./work -cf - . | tar -C "$d" -xf -
+    tar -C "$ROOT" --exclude=./.git --exclude=./out --exclude=./work --exclude=./dl --exclude=./transcripts -cf - . | tar -C "$d" -xf -
+    [ ! -e "$d/dl" ] && [ ! -e "$d/transcripts" ] || { echo "reprotest: dl/ or transcripts/ was copied (CI disk and time)" >&2; exit 1; }
     if [ "$2" = 1 ]; then
         sed 's/,--no-insert-timestamp//' "$d/build/cflags" > "$d/build/cflags.new" && mv "$d/build/cflags.new" "$d/build/cflags"
         sed 's/,--no-insert-timestamp//' "$d/build/aurbridge-stub" > "$d/build/stub.new" && mv "$d/build/stub.new" "$d/build/aurbridge-stub"
