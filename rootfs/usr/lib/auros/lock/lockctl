@@ -417,9 +417,16 @@ if [ -f (\$root)/auros/grub.cfg ]; then
   set prefix=(\$root)/auros
   configfile (\$root)/auros/grub.cfg
 fi
-search --no-floppy --fs-uuid --set=root $2
-set prefix=(\$root)/boot/grub
-configfile (\$root)/boot/grub/grub.cfg
+if search --no-floppy --fs-uuid --set=root $2 ; then
+  set prefix=(\$root)/boot/grub
+  configfile (\$root)/boot/grub/grub.cfg
+else
+  echo
+  echo "  AurOS is not on this computer any more."
+  echo "  This computer will start what comes next."
+  sleep 6
+fi
+exit
 EOF
         sync; mv -f "$ESP/EFI/$d/grub.cfg.new" "$ESP/EFI/$d/grub.cfg"
     done
