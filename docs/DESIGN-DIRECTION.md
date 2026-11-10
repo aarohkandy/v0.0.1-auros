@@ -66,7 +66,7 @@ Facts that shape the direction:
 ## 1. The idea in one sentence
 
 AurOS should look like **the clear printed instructions that come in the box**:
-warm paper, black ink, one green that always means "this way", and the same
+soft sky-white paper, black ink, one green that always means "this way", and the same
 picture of her screen wherever she sees it, from the website through the
 installer to the desktop.
 

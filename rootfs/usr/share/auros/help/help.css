@@ -10,7 +10,7 @@
  * tools/helptest.py checks the sizes, the links, the words and the colours. */
 :root {
   --bg: #F5F7FA;      /* paper (Sky) */
-  --soft: #E9EEF3;
+  --soft: #F0F3F7;
   --card: #FFFFFF;
   --rule: #687079;    /* every border: 4.7:1 on paper, 5.0 on a card */
   --ink: #17181A;

@@ -272,7 +272,7 @@ Written before the code landed; each is now in `main`.
    Since `1bd6f6e` that page ends with Close AurOS Setup, not a Fix button,
    until A2 lands the D11 pause: the e2e bitlocker variant cannot go on.
 7. **Window title** "Install AurOS" -> "AurOS Setup".
-8. **Light ground** (paper `#F6F2E9`): `vision.find_unchecked_boxes` assumes
+8. **Light ground** (paper `#F5F7FA`, Sky): `vision.find_unchecked_boxes` assumes
    a dark ground; the Wi-Fi box (when the engine turns it on) is a 2 px ink
    square on light.
 10. **Restart later no longer closes Setup**: it minimises the window, and

@@ -2043,8 +2043,12 @@ static void stepper(int x, int y, int w, int h)
     int seg = (w - S(8)) / 3;
     int lit = (int)((g_ticks * 60 / 600) % 3);
     for (int i = 0; i < 3; i++)
-        fill_rr((float)(x + i * (seg + S(4))), (float)y, (float)seg, (float)h, (float)h * 0.5f,
-                i == lit ? C_ACCENT : C_SOFT, 1.f);
+    {
+        float sx = (float)(x + i * (seg + S(4)));
+        fill_rr(sx, (float)y, (float)seg, (float)h, (float)h * 0.5f, i == lit ? C_ACCENT : C_SOFT, 1.f);
+        if (i != lit) /* soft on paper is 1.05:1: outline it like the determinate bar */
+            stroke_rr(sx, (float)y, (float)seg, (float)h, (float)h * 0.5f, 1.f, C_RULE, 1.f);
+    }
 }
 
 /* Working, done, something she needs to do, or something we will do. */
