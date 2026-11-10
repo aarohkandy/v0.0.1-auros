@@ -28,4 +28,7 @@ HARDEN_STATIC="-O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong \
 # it the installer would not start at all; with it the stack protector is
 # linked in and the .exe imports only Windows' own DLLs (build/aurbridge
 # checks that).
-HARDEN_PE="-static -fstack-protector-strong -Wl,--dynamicbase,--nxcompat,--high-entropy-va"
+# --no-insert-timestamp: the linker otherwise writes the link time into the PE
+# header, so two builds of the same source differ (tools/reprotest.sh keeps
+# the installer byte-reproducible; build/aurbridge-stub needs the same flag).
+HARDEN_PE="-static -fstack-protector-strong -Wl,--dynamicbase,--nxcompat,--high-entropy-va,--no-insert-timestamp"

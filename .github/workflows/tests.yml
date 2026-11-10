@@ -565,6 +565,12 @@ jobs:
       - name: manifesttest (the published wizard)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/manifesttest.sh dl/installer/AurOS-Setup.exe 2>&1 | tee transcripts/manifesttest.txt
+      # Two builds of build/aurbridge in two different directories must give the same bytes
+      # (the linker's time stamp is off); --selftest proves the check goes red without the flag.
+      - name: reprotest (AurOS-Setup.exe is byte-reproducible)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          { sh tools/reprotest.sh && sh tools/reprotest.sh --selftest; } 2>&1 | tee transcripts/reprotest.txt
       - name: Ferry (make && tests/run.sh)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
