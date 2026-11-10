@@ -94,5 +94,5 @@ AurOS ("AurOS is still on this computer. Start it again") that re-creates the en
   `pf_sim.c`/`simmain.c`, each proved red by mutation.
 
 **What was done instead.** A paragraph on `website/guide.html` (the printed sheet) for "The computer starts
-Windows instead of AurOS?": use the firmware menu key and choose AurOS; once confirmed, AurOS puts itself first
-again. It does not say "open AurOS Setup again", because that page does not exist.
+Windows instead of AurOS?": same menu key as for starting Windows, then choose the one that says AurOS; "Nothing is
+lost." It makes no promise that AurOS puts itself first again, and gives no mailbox. It does not say "open AurOS Setup again", because that page does not exist.
