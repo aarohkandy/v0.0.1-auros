@@ -12,8 +12,8 @@ with reasons, at the end.
 
 Facts that shape the direction:
 
-- **Signing is ruled out.** The owner decided against code-signing for good
-  (`docs/SIGNING.md`, `docs/handoff/SESSION-2026-10-23.md` D7). The website has
+- **Signing is not in place yet.** D7 ruled it out; D12 later decided on SignPath, off until secrets exist
+  (`docs/SIGNING.md`, D12). The website has
   to live with browser warnings.
 - **She already gets a light desktop.** `wizard.c:167-176` writes
   `theme=sandstone` for all four looks and `rootfs/usr/lib/auros/choices.sh:221-227`
@@ -693,7 +693,7 @@ first. Until then D ships text fixes only.
 
 ## 6. What NOT to do
 
-1. **Don't code-sign, and don't plan around signing** (D7). Design the warnings
+1. **Don't count on a signature today** (D12: planned, no date). Design the warnings
    honestly.
 2. **Don't teach her to switch off a Windows protection.** A one-way change
    belongs on a helper page, with the warning first.

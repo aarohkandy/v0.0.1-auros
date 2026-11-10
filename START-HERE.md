@@ -60,7 +60,7 @@ that people will pay for it.
   - D4 only real dangers stop an install;
   - D5 Flathub in "Get more programs", no password to install from the store;
   - D6 build/test/publish on GitHub Actions; GitHub Release + Pages;
-  - D7 **no code signing, no keys from Microsoft, no Microsoft services, ever**;
+  - D7 **no keys from Microsoft, no Microsoft services, ever** (its "no code signing" was replaced by D12: SignPath Foundation, off until the owner adds secrets; unsigned today);
   - D8 "other OSes" = the official Ubuntu/Mint/Fedora installed unattended (phase 2);
   - D9 **encrypted disk + short PIN** (TPM);
   - D11 **BitLocker is paused for one restart, never decrypted**.
@@ -132,7 +132,7 @@ Briefs for the streams whose briefs are not spelled out in STREAMS.md:
   (links `advanced.html`). Keep windows.yml green; screenshots in `docs/shots/wizard/`.
 - **E release pipeline.** `build.yml` (image with Firefox on Actions, staging,
   installer), `tests.yml` (KVM simulation suite + unit tests), `release.yml`
-  (prerelease → e2e-gated `promote` to latest → deploy Pages). Unsigned by design.
+  (prerelease → e2e-gated `promote` to latest → deploy Pages). Unsigned today (D12: SignPath planned, no date).
 - **F real-Windows e2e.** Windows 11 eval VM on Actions (Secure Boot, swtpm, KVM):
   Edge opens the website → "Get AurOS" → Keep anyway / Run anyway / UAC Yes → wizard
   by real input → restart → staging → AurOS "does it work?" → yes → install VLC

@@ -292,7 +292,7 @@ order:
 2. **Apply** at `https://signpath.org/apply`, pasting from
    `docs/legal/signpath-application.md` (fill the `[OWNER: ...]` spots: your
    contact email and the name you want shown). Check that
-   `https://aarohkandy.github.io/v0.0.1-auros/code-signing.html` opens first.
+   `https://1os.vercel.app/code-signing.html` opens first.
    Then tell an agent "applied", so the policy page can say so.
 3. **When they say yes**, in SignPath: create the project **AurOS** (slug
    `auros`), add the **GitHub.com** trusted build system and link it, paste

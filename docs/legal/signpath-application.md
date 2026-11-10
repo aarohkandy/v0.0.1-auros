@@ -13,7 +13,7 @@
 
 - [ ] Two-factor sign-in is on for your GitHub account (they require it of
       everyone on the team).
-- [ ] `https://aarohkandy.github.io/v0.0.1-auros/code-signing.html` opens
+- [ ] `https://1os.vercel.app/code-signing.html` opens
       (the code signing policy page, linked from every page's footer). If you
       have moved to your own domain, use that address everywhere below.
 - [ ] A release exists to point at: `https://github.com/aarohkandy/v0.0.1-auros/releases`
@@ -30,9 +30,9 @@
   through three screens. Windows and their files stay; "Put Windows back"
   removes AurOS.
 - **Repository:** https://github.com/aarohkandy/v0.0.1-auros (public)
-- **Home page:** https://aarohkandy.github.io/v0.0.1-auros/
+- **Home page:** https://1os.vercel.app/
 - **Download page / releases:** https://github.com/aarohkandy/v0.0.1-auros/releases
-- **Code signing policy:** https://aarohkandy.github.io/v0.0.1-auros/code-signing.html
+- **Code signing policy:** https://1os.vercel.app/code-signing.html
 - **Licence:** MIT (`LICENSE` in the repository). No dual licensing, no
   proprietary code in what is built or signed. Fonts are SIL OFL; the
   operating system image is Ubuntu packages under their own licences and is

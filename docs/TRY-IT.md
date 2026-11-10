@@ -104,7 +104,7 @@ Windows machine before it is published (`.github/workflows/windows.yml`).
 5. **Pick the look you want**: *Like Windows* (chosen to begin with),
    *Like a Mac*, *Big and simple* or *One thing at a time*. Each is a
    picture of the screen you get; all four use the light look called
-   Light (the Sky look: white cards under a soft sky). Press **Next**. Language, keyboard and time zone come from
+   Light (white cards under a soft sky). Press **Next**. Language, keyboard and time zone come from
    Windows without a question. You can change the look later in
    AurOS's Settings.
 6. **Ready** says what stays (Windows and your files), how much room

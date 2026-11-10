@@ -2,7 +2,7 @@
 
 > **2026-10-23.** Builds, tests and releases now happen on GitHub
 > Actions ("How a release is made", next), and AurOS-Setup.exe is
-> **unsigned by the owner's decision** (§2). Items 3 and 4 below are
+> **unsigned today** (§2: signing is planned, no date). Items 3 and 4 below are
 > done by that pipeline.
 
 ---
