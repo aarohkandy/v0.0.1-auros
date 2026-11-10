@@ -878,6 +878,54 @@ case "$R" in *"result=empty"*"files=0"*) ok "nothing of hers to save: it says so
     *) bad "nothing to save is result=empty" "$(echo "$R" | tr '\n' ' ')" ;; esac
 rm -f "$TMP/ferry.files"
 
+# ── "Save a report for whoever helps you": report:/dev/NAME ──────────
+echo
+echo "  and saving a report for whoever helps her, on a stick she chose"
+# The same door and the same stick list as the files above; then ONE fixed
+# program (stick-report) that is given the mount folder and nothing else.
+mkdir -p "$TMP/rbin"
+printf '#!/bin/sh\necho exfat\n' > "$TMP/rbin/blkid"
+printf '#!/bin/sh\nprintf "%%s|" "$@" >> "%s/rmount.args"; echo >> "%s/rmount.args"\nexit 0\n' "$TMP" "$TMP" > "$TMP/rbin/mount"
+printf '#!/bin/sh\nexit 0\n' > "$TMP/rbin/umount"
+printf '#!/bin/sh\nprintf "%%s|" "$@" >> "%s/reporter.args"; echo >> "%s/reporter.args"\nexit "$(cat "%s/reporter.rc" 2>/dev/null || echo 0)"\n' "$TMP" "$TMP" "$TMP" > "$TMP/reporter"
+chmod 755 "$TMP/rbin/"* "$TMP/reporter"
+OLDPATH=$PATH; PATH="$TMP/rbin:$PATH"
+export AUROS_REPORTER="$TMP/reporter" AUROS_REPORT_MNT="$TMP/rmnt" \
+       AUROS_REPORT_MOUNT="$TMP/rbin/mount" AUROS_REPORT_UMOUNT="$TMP/rbin/umount"
+: > "$TMP/reporter.args"; : > "$TMP/rmount.args"; rm -f "$TMP/reporter.rc"
+R=$(askf "report:/dev/sdb1")
+case "$R" in *"request=report"*"result=ok"*) ok "report:/dev/sdb1 is carried out" ;;
+    *) bad "report:/dev/sdb1 is carried out" "$(echo "$R" | tr '\n' ' ')" ;; esac
+[ "$(cat "$TMP/reporter.args")" = "$TMP/rmnt|" ] \
+  && ok "...and the fixed program is given the mount folder and nothing else" \
+  || bad "...the fixed program gets only the mount folder" "$(cat "$TMP/reporter.args")"
+grep -q -- 'nosuid,nodev,noexec' "$TMP/rmount.args" \
+  && ok "...the stick is mounted with no program allowed to run from it" \
+  || bad "...mounted nosuid,nodev,noexec" "$(cat "$TMP/rmount.args")"
+: > "$TMP/reporter.args"
+R=$(askf "report:/dev/sdd1")
+case "$R" in *"result=failed"*"why=nostick"*) ok "a name that is not on the stick list now is refused" ;;
+    *) bad "a name not on the list is refused" "$(echo "$R" | tr '\n' ' ')" ;; esac
+[ ! -s "$TMP/reporter.args" ] && ok "...and the program is not run" || bad "...and the program is not run" "$(cat "$TMP/reporter.args")"
+for w in 'report:/dev/../etc/passwd' 'report:/dev/sdb1;reboot' 'report:/dev/' 'report:sdb1' 'report:/dev/SDB1' \
+         'report:/dev/disk/by-id/x' "$(printf 'report:/dev/sdb1\nreport:/dev/sdc1')" 'Report:/dev/sdb1' 'report'; do
+    : > "$TMP/reporter.args"
+    R=$(askf "$w")
+    case "$R" in *"note=unknown request"*) : ;; *) bad "report word '$(echo "$w" | head -1)' is refused" "$(echo "$R" | tr '\n' ' ')"; continue ;; esac
+    [ ! -s "$TMP/reporter.args" ] && ok "report word '$(echo "$w" | head -1)' is refused, program not run" || bad "...program not run for '$w'"
+done
+printf '3\n' > "$TMP/reporter.rc"
+R=$(askf "report:/dev/sdb1")
+case "$R" in *"result=failed"*"why=notstick"*) ok "the program refusing the target (3) is a failure, said plainly" ;;
+    *) bad "the program refusing (3) is a failure" "$(echo "$R" | tr '\n' ' ')" ;; esac
+printf '1\n' > "$TMP/reporter.rc"
+R=$(askf "report:/dev/sdb1")
+case "$R" in *"result=failed"*"could not be saved"*) ok "any other end of the program is a failure" ;;
+    *) bad "any other end is a failure" "$(echo "$R" | tr '\n' ' ')" ;; esac
+rm -f "$TMP/reporter.rc"
+PATH=$OLDPATH
+unset AUROS_REPORTER AUROS_REPORT_MNT AUROS_REPORT_MOUNT AUROS_REPORT_UMOUNT
+
 # ── Windows Update moves itself first ───────────────────────────────
 echo
 echo "  and Windows Update, or a BIOS update, puts Windows first after she said it works"

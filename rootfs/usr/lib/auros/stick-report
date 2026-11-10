@@ -1,0 +1,174 @@
+#!/bin/sh
+# ═══════════════════════════════════════════════════════════════════
+#  stick-report MOUNTED-STICK-DIRECTORY
+#
+#  "Save a report for whoever helps you" (Settings). Writes ONE plain
+#  text file, AurOS-report-<date>.txt, onto a USB stick, so a helper can
+#  see why this computer misbehaves without anyone opening a terminal.
+#
+#  Run as root by answer.sh (the request is "report:/dev/NAME", the same
+#  door and the same stick list as "Save my files to a USB stick first").
+#  It takes ONE argument and does nothing else with it: the directory a
+#  stick is mounted on. That directory is refused unless it is itself a
+#  mount point, of a disk that is removable or on USB, with a file system
+#  the stick list offers. Nothing else is configurable; a report cannot be
+#  sent to /etc or to the internal disk by any argument.
+#
+#  PRIVACY (the same bar as src/aurbridge/hwinv.h): the file is something
+#  a person photographs, mails or attaches to a public bug. So
+#    - NetworkManager's connection files are never opened, and the device
+#      list is asked for without the network's name;
+#    - lines that carry a password, key or secret lose everything after
+#      the label; so do serial numbers;
+#    - UUIDs, MAC addresses, this computer's name and anything under
+#      /home or the media folders are removed from every line;
+#    - the top of the file says what is and is not in it.
+#  It is a filter on the way out, not a promise about what a program
+#  chose to log; the header says that too.
+# ═══════════════════════════════════════════════════════════════════
+set -u
+# Fixed; AUROS_REPORT_PATH / AUROS_REPORT_ROOT are for
+# tools/stickreporttest.sh only (the unit sets neither).
+PATH=${AUROS_REPORT_PATH:-/usr/sbin:/usr/bin:/sbin:/bin}
+export PATH
+LC_ALL=C; export LC_ALL
+R=${AUROS_REPORT_ROOT:-}
+LINES_MAX=4000         # journal lines, each boot
+SECTION_MAX=262144     # bytes any one section may take
+OUT_MAX=2097152        # bytes the whole report may take
+
+refuse() { echo "stick-report: refusing: $*" >&2; exit 3; }
+
+# ── the one argument, and what it must be ──────────────────────────
+[ $# -eq 1 ] || refuse "one argument, a mounted USB stick, is needed"
+T=$1
+case $T in /*) ;; *) refuse "not an absolute path" ;; esac
+case $T in *[!A-Za-z0-9/._-]*) refuse "unusual characters in the path" ;; esac
+[ -d "$T" ] || refuse "no such folder"
+T=$(cd "$T" && pwd -P) || refuse "cannot enter the folder"
+src=$(findmnt -n -o SOURCE --mountpoint "$T" 2>/dev/null)
+[ -n "$src" ] || refuse "$T is not a mounted volume"
+case $src in /dev/*) ;; *) refuse "$T is not a disk" ;; esac
+case $(findmnt -n -o FSTYPE --mountpoint "$T" 2>/dev/null) in
+    exfat|vfat|ntfs|ntfs3|fuseblk) ;;
+    *) refuse "$T is not a stick-style file system" ;;
+esac
+# Removable, or on USB: the test `ferry stick list` applies, on the volume
+# and on the disk it sits on (-s lists the volume and then its parents).
+lsblk -srno RM,TRAN "$src" 2>/dev/null | awk '$1 == "1" || $2 == "usb" { f = 1 } END { exit !f }' \
+    || refuse "$src is not a removable USB disk"
+
+# ── filters ────────────────────────────────────────────────────────
+HOST=$(hostname 2>/dev/null || cat "$R/etc/hostname" 2>/dev/null || true)
+KEYS='psk|wep-key|passw|passphrase|secret|private-key|token|rescue[ -]?(code|key)|recovery[ -]?key|api-?key|serial'
+redact() {
+    awk -v host="$HOST" -v K="$KEYS" '
+    {
+        if (host != "" && length(host) > 3) {
+            out = ""; s = $0
+            while ((i = index(s, host)) > 0) { out = out substr(s, 1, i - 1) "[this-pc]"; s = substr(s, i + length(host)) }
+            $0 = out s
+        }
+        # JSON: "disk_serial": "x" goes, the rest of the line stays
+        l = tolower($0)
+        while (match(l, "\"[a-z0-9_ -]*(" K ")[a-z0-9_ -]*\" *: *\"[^\"]*\"")) {
+            $0 = substr($0, 1, RSTART - 1) "\"[removed]\"" substr($0, RSTART + RLENGTH)
+            l = tolower($0)
+        }
+        # a label and everything after it: passwords, keys, secrets, serials
+        if (match(l, "(" K ")[a-z0-9_ #.\"-]{0,16}[=:]")) {
+            print substr($0, 1, RSTART + RLENGTH - 1) " [removed]"; next
+        }
+        print
+    }' |
+    sed -E \
+        -e 's/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/[id-removed]/g' \
+        -e 's/([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}/[mac-removed]/g' \
+        -e 's#/home/[^ "]*#/home/[removed]#g' \
+        -e 's#(/run/media|/media)/[^ "]*#\1/[removed]#g'
+}
+sec() { printf '\n===== %s =====\n' "$1"; }
+# run TITLE COMMAND...  -- one section: the command's output, filtered and capped.
+run() {
+    sec "$1"; shift
+    if command -v "$1" >/dev/null 2>&1; then
+        "$@" 2>&1 | redact | head -c "$SECTION_MAX"
+    else
+        echo "(not on this computer)"
+    fi
+}
+# file TITLE PATH...  -- the same, for files; a name that is not there is said so.
+filesec() {
+    sec "$1"; shift
+    _any=0
+    for _f in "$@"; do
+        [ -f "$_f" ] || continue
+        _any=1
+        printf -- '--- %s\n' "${_f#"$R"}"
+        redact < "$_f" | head -c "$SECTION_MAX"
+        echo
+    done
+    [ "$_any" = 1 ] || echo "(none on this computer)"
+}
+
+# ── the report, built beside its final name and moved into place ───
+D=$(date +%Y-%m-%d 2>/dev/null || echo undated)
+NAME="AurOS-report-$D.txt"
+[ ! -e "$T/$NAME" ] || NAME="AurOS-report-$D-$(date +%H%M%S).txt"
+PART="$T/.$NAME.part"
+trap 'rm -f "$PART"' EXIT
+
+{
+cat <<EOF
+AurOS report, saved $(date -u '+%Y-%m-%d %H:%M UTC' 2>/dev/null)
+For the person helping: this file says how this computer is set up and what it complained about.
+
+WHAT IS IN IT
+  - the system messages with warnings and errors, this start and the one before
+  - the hardware list (PCI and USB), the sound cards, the disks' layout
+  - the choices made when AurOS was installed, and the installer's own record
+  - the network cards and whether radios are switched off (not the network's name)
+  - the AurOS version and the kernel version
+
+WHAT IS NOT IN IT, ON PURPOSE
+  - no Wi-Fi names or passwords, and none of the files that hold them
+  - no serial numbers, no disk or network-card identifiers
+  - no file names, and nothing from the folders under /home
+  - this computer's name is replaced with [this-pc]
+Lines that name a password, key, secret or serial lose everything after the label.
+A program can still write something private in its own words in a system message;
+read it through before putting it anywhere public.
+EOF
+
+sec "AurOS version"
+{ cat "$R/usr/lib/os-release" 2>/dev/null || echo "(no os-release)"; } | redact
+run "Kernel" uname -a
+filesec "Installer choices (/etc/auros/*.conf)" "$R"/etc/auros/*.conf
+filesec "Installer's record (journal.json)" "$R/aurbridge/journal.json" "$R/run/aurbridge/journal.json"
+run "System messages, this start (warnings and worse, last $LINES_MAX)" \
+    journalctl -b 0 -p warning -n "$LINES_MAX" --no-pager -o short-iso
+run "System messages, the start before (warnings and worse, last $LINES_MAX)" \
+    journalctl -b -1 -p warning -n "$LINES_MAX" --no-pager -o short-iso
+sec "Kernel log (last $LINES_MAX lines)"
+if command -v dmesg >/dev/null 2>&1; then dmesg 2>&1 | tail -n "$LINES_MAX" | redact | head -c "$SECTION_MAX"; else echo "(not on this computer)"; fi
+run "PCI devices and their drivers (lspci -nnk)" lspci -nnk
+run "USB devices (lsusb)" lsusb
+run "Disk layout" lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT
+run "Network cards (nmcli -t)" nmcli -t -f DEVICE,TYPE,STATE dev
+run "Radios switched off or blocked (rfkill)" rfkill list
+run "Sound cards (aplay -l)" aplay -l
+printf '\n===== end of report =====\n'
+} > "$PART" 2>/dev/null
+
+[ -s "$PART" ] || { echo "stick-report: could not write on the stick" >&2; exit 1; }
+if [ "$(wc -c < "$PART")" -gt "$OUT_MAX" ]; then
+    head -c "$OUT_MAX" "$PART" > "$PART.cut" && mv -f "$PART.cut" "$PART"
+    printf '\n===== report cut here: it was longer than %s bytes =====\n' "$OUT_MAX" >> "$PART"
+fi
+chmod 0644 "$PART" 2>/dev/null
+sync -f "$T" 2>/dev/null || sync
+mv -f "$PART" "$T/$NAME" || { echo "stick-report: could not finish the file" >&2; exit 1; }
+sync -f "$T" 2>/dev/null || sync
+trap - EXIT
+echo "stick-report: wrote $NAME"
+exit 0

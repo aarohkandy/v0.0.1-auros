@@ -40,6 +40,8 @@ enum {
                       first start offered and she pressed "Not now" on */
     R_WINDOWS,     /* opens a page: put Windows back, on a machine
                       that came from Windows and only there */
+    R_REPORT,      /* "Save a report for whoever helps you": one text file on a USB stick.
+                      Last, so it moves none of the rows above it */
     R_N
 };
 
@@ -509,6 +511,7 @@ static void open_row(shell_ctx *c, int which)
         if (l + 2 < sizeof blob) { blob[l + 1] = 0; c->settings_open = 0; c->spawn(c, blob, 1); }
     }
     if (which == R_FILES) welcome_open_bring(c);
+    if (which == R_REPORT) welcome_open_report(c);
     if (which == R_TIME)  { S.page = SET_PAGE_TIME;  S.first_row = 0;
                             S.sel = -1; fill_page(c); }
     if (which == R_SHELL) { S.page = SET_PAGE_SHELL; S.first_row = 0;
@@ -718,6 +721,7 @@ static const char *row_name(int which)
     case R_SHELL:   return "How this computer works";
     case R_LOOK:    return "Colors";
     case R_FILES:   return "Bring my files across";
+    case R_REPORT:  return "Save a report for whoever helps you";
     case R_WINDOWS: return "Put Windows back";
     }
     return "";
@@ -752,6 +756,9 @@ static void row_value(const shell_ctx *c, int which, char *out, size_t n)
         break;
     case R_FILES:
         snprintf(out, n, "%s", "Copy your files from Windows");
+        break;
+    case R_REPORT:
+        snprintf(out, n, "%s", "On a USB stick, for a helper");
         break;
     case R_WISHES:
         snprintf(out, n, "%s", "See them, turn them on or off");

@@ -44,6 +44,7 @@ static struct {
     int  net_seen;          /* what the check last showed, so a change is repainted */
     int  deferred;          /* she pressed "Not yet": the question is open, nothing is decided */
     int  bring;             /* opened from Settings to bring her files across (ctx too) */
+    int  report;            /* the stick pages are for a report for her helper, not her files (ctx too) */
     char why[16];           /* why Put Windows back could not save them  */
     char progress[160];     /* the newest plain line of the running copy */
     int  files;             /* how many files the copy says it saved     */
@@ -333,6 +334,15 @@ static void open_stick_page(shell_ctx *c)
 void welcome_open_stick(shell_ctx *c)
 {
     W.from_blocked = 0;
+    W.report = 0;
+    open_stick_page(c);
+}
+
+/* "Save a report for whoever helps you": the same stick pages, a different thing saved. */
+void welcome_open_report(shell_ctx *c)
+{
+    W.from_blocked = 0;
+    W.report = 1;
     open_stick_page(c);
 }
 
@@ -340,6 +350,7 @@ void welcome_open_blocked(shell_ctx *c, const char *why)
 {
     W.ctx = 1;
     W.bring = 0;
+    W.report = 0;
     W.from_blocked = 1;
     snprintf(W.why, sizeof W.why, "%s", why ? why : "");
     W.page = W_BLOCKED;
@@ -360,6 +371,7 @@ void welcome_open_bring(shell_ctx *c)
 {
     W.ctx = 1;
     W.bring = 1;
+    W.report = 0;
     W.from_blocked = 0;
     W.page = W_BRING;
     W.sel = 0; W.keyed = 0; W.note[0] = 0; W.progress[0] = 0;
@@ -431,7 +443,7 @@ int welcome_step(shell_ctx *c)
     if (!W.asked) return dirty;
     /* What the copy says it is doing, while it runs. */
     if (W.page == W_IMPORTING && progress_look("import.log")) dirty = 1;
-    if (W.page == W_STICK_SAVING && progress_look("stick.log")) dirty = 1;
+    if (W.page == W_STICK_SAVING && !W.report && progress_look("stick.log")) dirty = 1;
 
     char path[512];
     snprintf(path, sizeof path, "%s/result", WELCOME_ANSWER);
@@ -488,7 +500,7 @@ int welcome_step(shell_ctx *c)
         if (!strcmp(req, "confirm"))      W.page = W_CONFIRMED;
         else if (!strcmp(req, "decline")) W.page = W_DECLINED;
         else if (!strcmp(req, "import"))  W.page = W_IMPORTED;
-        else if (!strcmp(req, "stick"))   W.page = W_STICK_DONE;
+        else if (!strcmp(req, "stick") || !strcmp(req, "report")) W.page = W_STICK_DONE;
         else                              W.page = W_TROUBLE;
     } else {
         /* refused, failed, or a word this panel does not know. All of
@@ -830,8 +842,8 @@ static const char *head_of(int page)
     case W_EMPTY:     return W.ctx && !W.bring ? "No files to save" : "No files to bring across";
     case W_STICK_PLUG:   return "Plug in a USB stick";
     case W_STICK_PICK:   return "Which USB stick?";
-    case W_STICK_SAVING: return "Saving your files";
-    case W_STICK_DONE:   return "Your files are on the USB stick";
+    case W_STICK_SAVING: return W.report ? "Saving the report" : "Saving your files";
+    case W_STICK_DONE:   return W.report ? "The report is on the USB stick" : "Your files are on the USB stick";
     case W_BLOCKED:      return "Windows was not put back";
     default:          return "That did not work";
     }
@@ -864,10 +876,12 @@ static const char *sub_of(int page, int can_import)
     case W_EMPTY:     return W.ctx && !W.bring
                           ? "There were no documents, pictures, music or videos of yours in AurOS to save."
                           : "AurOS looked in Windows and found no documents, pictures, music or videos.";
-    case W_STICK_PLUG:   return "AurOS will save your documents, pictures, music and videos on it.";
-    case W_STICK_PICK:   return "Your files are saved on the one you press.";
+    case W_STICK_PLUG:   return W.report ? "AurOS will save one small text file on it, for the person who helps you."
+                                         : "AurOS will save your documents, pictures, music and videos on it.";
+    case W_STICK_PICK:   return W.report ? "The report is saved on the one you press." : "Your files are saved on the one you press.";
     case W_STICK_SAVING: return "Leave the USB stick in and the computer on.";
-    case W_STICK_DONE:   return "They are in the folder \"From AurOS\". It is safe to take the stick out now.";
+    case W_STICK_DONE:   return W.report ? "It is a file called AurOS-report. It is safe to take the stick out now."
+                                         : "They are in the folder \"From AurOS\". It is safe to take the stick out now.";
     case W_BLOCKED:
         /* Why, in her words. AurOS saves her files into Windows before it
          * puts Windows back; these are the ways that cannot be done. */
@@ -930,16 +944,20 @@ static int body_of(int page, int partial, const char *lines[3])
         lines[n++] = "Nothing is wrong, and nothing in Windows was changed.";
         break;
     case W_STICK_PLUG:
-        lines[n++] = "It needs room for them. Anything already on the stick stays there.";
+        lines[n++] = W.report ? "Anything already on the stick stays there."
+                              : "It needs room for them. Anything already on the stick stays there.";
         break;
     case W_STICK_PICK:
-        lines[n++] = "Nothing on the stick is deleted.";
+        lines[n++] = W.report ? "Nothing on the stick is deleted. The report has no passwords in it."
+                              : "Nothing on the stick is deleted.";
         break;
     case W_STICK_SAVING:
+        if (W.report) { lines[n++] = "This takes a minute. Nothing on this computer is changed."; break; }
         if (W.progress[0]) lines[n++] = W.progress;
         lines[n++] = "Your files stay here too. Nothing is removed from this computer.";
         break;
     case W_STICK_DONE:
+        if (W.report) { lines[n++] = "Give the stick to the person who is helping you."; break; }
         if (W.files == 1) snprintf(count, sizeof count, "1 file is saved.");
         else if (W.files >= 1000) snprintf(count, sizeof count, "%d,%03d files are saved.", W.files / 1000, W.files % 1000);
         else if (W.files > 1) snprintf(count, sizeof count, "%d files are saved.", W.files);
@@ -1169,10 +1187,11 @@ static int do_action(shell_ctx *c, int id)
     }
     if (id >= A_STICK0 && id < A_STICK0 + WEL_STICKS && id - A_STICK0 < W.n_sticks) {
         char word[48];
-        snprintf(word, sizeof word, "stick:%s", W.stick[id - A_STICK0].dev);
-        if (ask_word(word, "stick") == 0) { W.page = W_STICK_SAVING; W.sel = 0; }
+        snprintf(word, sizeof word, "%s:%s", W.report ? "report" : "stick", W.stick[id - A_STICK0].dev);
+        if (ask_word(word, W.report ? "report" : "stick") == 0) { W.page = W_STICK_SAVING; W.sel = 0; }
         else { W.page = W_TROUBLE;
-               snprintf(W.note, sizeof W.note, "AurOS could not start saving your files on the USB stick."); }
+               snprintf(W.note, sizeof W.note, W.report ? "AurOS could not start saving the report on the USB stick."
+                                                         : "AurOS could not start saving your files on the USB stick."); }
         return 1;
     }
     return 0;

@@ -102,6 +102,7 @@ QUESTIONS = [
     ("how do I remove AurOS",                 "remove-auros.html", ["Remove AurOS and put Windows back", "Save my files to a USB stick first"]),
     ("what the first question does",          "first-days.html", ["Yes, it all works", "No, go back to Windows", "Let me look first"]),
     ("who do I ask",                          ASK, ["someone you trust", "photo"]),
+    ("my helper needs to see what went wrong", ASK, ["Save a report for whoever helps you", "memory stick"]),
 ]
 
 # The sentences the pages quote, as the desktop says them: each must be on the

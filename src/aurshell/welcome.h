@@ -99,6 +99,10 @@ enum { W_ASK, W_WORKING, W_CONFIRMED, W_IMPORTING, W_IMPORTED,
  * Opens at "plug in a stick" or, when one is already there, at the choice. */
 void welcome_open_stick(shell_ctx *c);
 
+/* "Save a report for whoever helps you", from Settings: the same stick pages, saving one
+ * text file for her helper (answer.sh "report:"). */
+void welcome_open_report(shell_ctx *c);
+
 /* Put Windows back could not save her files in Windows first, and says why
  * (answer.sh's why=): toomany, locked, noroom, dirty, nodrive, some -- or
  * anything else for the plain sentence. Offers the USB stick, and says what

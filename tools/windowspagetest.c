@@ -312,6 +312,13 @@ int main(void)
         C.settings_open = 1; settings_opened(&C);
     }
 
+    printf("Save a report for whoever helps you\n");
+    ok(shown("Save a report for whoever helps you") || (press("Show more") && shown("Save a report for whoever helps you")),
+       "Settings has the row (on the first page or behind \"Show more\")");
+    ok(press("Save a report for whoever helps you") && welcome_page() >= W_STICK_PLUG && welcome_page() <= W_STICK_PICK && C.welcome_open,
+       "she presses it: the USB stick screens open (plug in, or which stick)");
+    C.welcome_open = 0; settings_opened(&C);
+
     printf("Put Windows back: her files first\n");
     ok(press("Put Windows back"), "\"Put Windows back\" opens its page");
     ok(shown("Save my files to a USB stick first"), "the page has \"Save my files to a USB stick first\"");
