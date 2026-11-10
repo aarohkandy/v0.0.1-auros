@@ -181,6 +181,22 @@ static void give_up(const char *why, const char *remedy, const char *verdict,
     stop_and_restart();
 }
 
+/* THE POWER, LOOKED AT AGAIN JUST BEFORE THE LINE. The first look is minutes
+ * earlier: after it come the hash of everything Windows wrote, the read of
+ * every sector about to be freed and the copy of her Windows start-up, which on
+ * a spinning disk is a long time for a charger to be knocked out of a laptop.
+ * ntfsresize cannot be stopped without leaving the drive to be checked, so
+ * "it was plugged in when we started" is not the question; "is it now" is.
+ * Called with nothing changed, so it is an ordinary refusal. */
+static void power_still_on(void)
+{
+    power_state pw; char pwhy[200];
+    power_read(NULL, &pw);
+    if (!power_ok(&pw, pwhy, sizeof pwhy))
+        refuse(pwhy, "Plug it in and try again. Nothing has been changed.",
+               "on-battery");
+}
+
 static void step(rec_step s, const char *note)
 {
     if (!g_rec_ok) return;
@@ -423,6 +439,7 @@ static void install_gap(const stage_machine *m, journal *j)
     if (rescue_capture(disk, &rsc, j->run_id, dots, why, sizeof why) != 0)
         refuse(why, NULL, "rescue-capture-failed");
     fprintf(stderr, "\n");
+    power_still_on();
     step(REC_GATE_OK, NULL);
     fault_maybe("gate");
     stage_say("Everything AurOS can check has been checked.");
@@ -966,6 +983,7 @@ void install_run(const stage_machine *m)
     stage_say("saved    %llu MB, read back and checked",
               (unsigned long long)(rsc_need / (1024 * 1024)));
 
+    power_still_on();
     step(REC_GATE_OK, NULL);
     fault_maybe("gate");
     stage_say("%s", "");

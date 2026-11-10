@@ -200,6 +200,26 @@ else
     echo "    (no readable whole disk here)"
 fi
 
+# THE POWER IS LOOKED AT AGAIN BEFORE THE LINE, not only at the start. Both
+# gates (the Windows-side fast path and the no-stick install) hash the whole
+# copy of AurOS, read every sector about to be freed and save the Windows
+# start-up between the first power look and the shrink; a charger knocked out
+# in those minutes must still stop the install while nothing has changed. The
+# staging environment cannot be driven from here, so the order is read from the
+# source: every step(REC_GATE_OK) is preceded by power_still_on(), and that
+# function refuses with "on-battery" when power_ok says no.
+echo
+echo "  and again at the line, not only at the start"
+gates=$(grep -c 'step(REC_GATE_OK' src/aurstage/install.c)
+guarded=$(awk '/power_still_on\(\);/ {p=NR} /step\(REC_GATE_OK/ {if (p && NR-p<=1) n++} END {print n+0}' src/aurstage/install.c)
+[ "$gates" -ge 2 ] && [ "$gates" = "$guarded" ] \
+  && ok "every gate looks at the power just before it is passed" \
+  || bad "every gate looks at the power just before it is passed" "$guarded of $gates gates are preceded by power_still_on()"
+sed -n '/^static void power_still_on/,/^}/p' src/aurstage/install.c > "$TMP/psl.txt"
+grep -q 'power_read(NULL' "$TMP/psl.txt" && grep -q '!power_ok' "$TMP/psl.txt" && grep -q '"on-battery"' "$TMP/psl.txt" \
+  && ok "...and that look refuses, with nothing changed, when it is not on the mains" \
+  || bad "...and that look refuses, with nothing changed, when it is not on the mains" "$(cat "$TMP/psl.txt")"
+
 echo
 if [ "$fail" -gt 0 ]; then
     echo "$fail of $checked wrong."
