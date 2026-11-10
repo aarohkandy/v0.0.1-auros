@@ -131,6 +131,7 @@ sh tools/signtest.sh       # needs osslsigncode + openssl
 sh tools/exetest.sh        # needs mingw + python3; starts a local server
 sh tools/aurfirsttest.sh   # phases 9 and 10: BootOrder, BootNext, the gate
 sh tools/nvramtest.sh      # the installer's boot entry, and its gate
+sh tools/stickreporttest.sh [mutants]  # "Save a report for whoever helps you": redaction, caps, removable-only
 sudo sh tools/loadertest.sh  # does the machine start AurOS by itself
 
 ./build/staging desktop && sudo sh tools/stagetest.sh   # needs qemu + losetup

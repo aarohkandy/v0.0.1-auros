@@ -1,7 +1,7 @@
 #!/bin/sh
 # ═══════════════════════════════════════════════════════════════════
 #  answer.sh — the things the desktop may ask for as root (the five words,
-#  and import:NAME, and stick:/dev/NAME)
+#  and import:NAME, and stick:/dev/NAME, and report:/dev/NAME)
 #
 #  Started by auros-answer.path when a file appears in /run/auros,
 #  which is aurshell.service's own RuntimeDirectory: mode 0700, owned
@@ -87,6 +87,7 @@ esac
 sdev=
 case "$word" in
   stick:*) sdev=${word#stick:}; word=stick ;;
+  report:*) sdev=${word#report:}; word=report ;;   # "Save a report for whoever helps you": same door, same list
 esac
 
 say() { printf '%s\n' "$*" >> "$RES.new"; }
@@ -424,6 +425,46 @@ case "$word" in
           *) say "result=failed"; say "code=$src"
              say "note=your files could not be saved on the USB stick" ;;
         esac
+    fi
+    ;;
+  report)
+    # A REPORT FOR WHOEVER HELPS HER, on a stick she chose (same stick list as
+    # above). Root mounts the stick (no program may run from it) and runs ONE
+    # fixed program that takes nothing but the mount folder, which it checks
+    # again is a removable USB disk (stick-report). Nothing is armed, nothing
+    # on the stick is deleted: it adds one text file.
+    FERRY=${AUROS_FERRY:-/usr/bin/ferry}
+    REPORTER=${AUROS_REPORTER:-/usr/lib/auros/stick-report}
+    RMNT=${AUROS_REPORT_MNT:-/run/ferry/report}
+    if [ ! -x "$REPORTER" ] || [ ! -x "$FERRY" ]; then
+        say "result=failed"
+        say "note=this image has no way to save a report on a USB stick"
+    elif [ -z "$sdev" ] || ! "$FERRY" stick list 2>/dev/null | cut -f1 | grep -qxF "$sdev"; then
+        say "result=failed"
+        say "why=nostick"
+        say "note=that USB stick is not there any more"
+    else
+        case "$(blkid -o value -s TYPE "$sdev" 2>/dev/null)" in
+            exfat) rfs=exfat ;; vfat) rfs=vfat ;; ntfs) rfs=ntfs-3g ;; *) rfs= ;;
+        esac
+        mkdir -p "$RMNT" 2>/dev/null
+        if [ -z "$rfs" ] || ! ${AUROS_REPORT_MOUNT:-mount} -t "$rfs" -o rw,noatime,nosuid,nodev,noexec,umask=022 "$sdev" "$RMNT" 2>/dev/null; then
+            say "result=failed"
+            say "why=unopened"
+            say "note=AurOS could not open the USB stick to save the report"
+        else
+            timeout "${AUROS_REPORT_LIMIT:-300}" "$REPORTER" "$RMNT" >>"$LOG" 2>&1
+            rrc=$?
+            sync -f "$RMNT" 2>/dev/null
+            ${AUROS_REPORT_UMOUNT:-umount} "$RMNT" 2>/dev/null
+            case "$rrc" in
+              0) say "result=ok" ;;
+              3) say "result=failed"; say "code=3"; say "why=notstick"
+                 say "note=that is not a USB stick AurOS can save a report on" ;;
+              *) say "result=failed"; say "code=$rrc"
+                 say "note=the report could not be saved on the USB stick" ;;
+            esac
+        fi
     fi
     ;;
   putback)

@@ -289,6 +289,10 @@ jobs:
       - name: aurfirsttest
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/aurfirsttest.sh 2>&1 | tee transcripts/aurfirsttest.txt
+      - name: stickreporttest (Save a report for whoever helps you - private, capped, only onto a removable stick)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          { sh tools/stickreporttest.sh && sh tools/stickreporttest.sh mutants; } 2>&1 | tee transcripts/stickreporttest.txt
       - name: choicestest
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |

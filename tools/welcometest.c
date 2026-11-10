@@ -573,6 +573,47 @@ int main(void)
         ok("escape lets go of it, and nothing was asked for", c.welcome_open == 0 && !asked_now()[0]);
     }
 
+    /* ── Save a report for whoever helps you ──────────────────────── */
+    printf("\n  saving a report for her helper on a USB stick\n");
+    {
+        fake_ferry("/dev/sdb1\tSanDisk (16 GB)\t16000000000\texfat\n");
+        unlink(WELCOME_ANSWER "/result");
+        c.welcome_open = 0;
+        welcome_open_report(&c);
+        ok("with a stick in, it goes to which stick", c.welcome_open == 1 && welcome_page() == W_STICK_PICK);
+        press_nth(&c, W_STICK_PICK, 0);
+        ok("pressing the stick asks for a REPORT on that one, not her files", !strcmp(asked_now(), "report:/dev/sdb1"));
+        ok("...and goes to the screen that says it is being saved", welcome_page() == W_STICK_SAVING);
+        unlink(WELCOME_RUN "/answer");
+        put(WELCOME_ANSWER "/stick.log", "An old line about saving her files.\n");
+        welcome_step(&c);
+        put(WELCOME_ANSWER "/result", "request=stick\nresult=ok\nfiles=5000\n");
+        ok("an answer to the other request is not this one's", welcome_step(&c) == 0 && welcome_page() == W_STICK_SAVING);
+        put(WELCOME_ANSWER "/result", "request=report\nresult=ok\n");
+        ok("saved: the screen that says it is safe to take the stick out",
+           welcome_step(&c) == 1 && welcome_page() == W_STICK_DONE);
+        press_nth(&c, W_STICK_PICK, 0);
+        unlink(WELCOME_RUN "/answer");
+        put(WELCOME_ANSWER "/result", "request=report\nresult=failed\nwhy=notstick\nnote=that is not a USB stick AurOS can save a report on\n");
+        welcome_step(&c);
+        ok("a refusal is the trouble screen", welcome_page() == W_TROUBLE);
+        welcome_view vt = { W_TROUBLE, 0 };
+        rect b[16];
+        welcome_targets(&c, c.screen_w, c.screen_h, &vt, b, 16);
+        c.welcome_open = 1;
+        welcome_click(&c, b[0].x + b[0].w / 2, b[0].y + b[0].h / 2);         /* Try again */
+        ok("\"Try again\" starts the report screens over, still for a report", welcome_page() == W_STICK_PICK);
+        press_nth(&c, W_STICK_PICK, 0);
+        ok("...and asks for a report again", !strcmp(asked_now(), "report:/dev/sdb1"));
+        unlink(WELCOME_RUN "/answer");
+        welcome_open_stick(&c);
+        press_nth(&c, W_STICK_PICK, 0);
+        ok("her files after a report ask for her FILES again", !strcmp(asked_now(), "stick:/dev/sdb1"));
+        unlink(WELCOME_RUN "/answer");
+        welcome_open_stick(&c);
+        welcome_key(&c, 1);
+    }
+
     /* ── Put Windows back could not save her files first ───────────── */
     printf("\n  when Put Windows back cannot save her files in Windows\n");
     {

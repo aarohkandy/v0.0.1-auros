@@ -125,6 +125,7 @@ static int name_ok(const unsigned char *s, size_t n)
  * plain name of a block device: letters and digits after /dev/, nothing
  * else (no further slash, no dot, no option, no space, no second line). */
 #define STICK_PREFIX "stick:/dev/"
+#define REPORT_PREFIX "report:/dev/"
 #define STICK_NAME_MAX 24
 
 static int stick_name_ok(const unsigned char *s, size_t n)
@@ -215,17 +216,23 @@ int af_request_take(char *out, size_t n)
         snprintf(out, n, "%s", "unknown");
         return 1;
     }
-    /* "stick:/dev/NAME": checked as a whole, or not at all. */
-    if (k > (ssize_t)strlen(STICK_PREFIX) &&
-        strncmp(raw, STICK_PREFIX, strlen(STICK_PREFIX)) == 0) {
-        size_t pl = strlen(STICK_PREFIX), nl = (size_t)k - pl;
-        if (stick_name_ok((const unsigned char *)raw + pl, nl) && pl + nl + 1 <= n) {
-            memcpy(out, raw, pl + nl);
-            out[pl + nl] = 0;
-            return 0;
+    /* "stick:/dev/NAME" and "report:/dev/NAME": checked as a whole, or not
+     * at all. The second is "Save a report for whoever helps you" -- the
+     * same stick, the same plain device name; answer.sh runs one fixed
+     * program for it that takes no other argument. */
+    static const char *const stick_words[] = { STICK_PREFIX, REPORT_PREFIX };
+    for (size_t w = 0; w < sizeof stick_words / sizeof stick_words[0]; w++) {
+        size_t pl = strlen(stick_words[w]);
+        if (k > (ssize_t)pl && strncmp(raw, stick_words[w], pl) == 0) {
+            size_t nl = (size_t)k - pl;
+            if (stick_name_ok((const unsigned char *)raw + pl, nl) && pl + nl + 1 <= n) {
+                memcpy(out, raw, pl + nl);
+                out[pl + nl] = 0;
+                return 0;
+            }
+            snprintf(out, n, "%s", "unknown");
+            return 1;
         }
-        snprintf(out, n, "%s", "unknown");
-        return 1;
     }
     size_t o = 0;
     int stray = 0;
