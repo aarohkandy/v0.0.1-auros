@@ -8,6 +8,9 @@
  *             (every layout publishes them: shell_layout.targets)
  *   bounds    a window is placed wholly on the screen, in every look, whatever size it
  *             asked for and wherever it asked to be (OBS-REAL-IMAGE)
+ *   waiting   the words on a card that is waiting for its program ("Still starting. This computer is
+ *             taking a while.") are drawn whole and inside the card, in every look, at 1024x600 and up, at
+ *             every text size (FLOORS: WAIT_DUMP=1, WK=<scale index>, WS=<size index> list what was drawn)
  *   quiet     the hint and a window's subtitle, as painted, clear 7:1 on the Light look
  *             (the shell draws them at part strength; the ink the eye gets is what counts)
  *
@@ -66,6 +69,7 @@ static const char *NAMES[] = { "Internet", "Your files", "Music and video", "Pho
                                "Spreadsheets", "Notes", "Printers", "Calculator", "Documents",
                                "Zip files", "Get more programs" };
 
+static const char *waiting_sub;     /* set: the one window is a card still waiting for its program, with this line */
 static int none_in_use;             /* set: no window is the one in use (so none is painted over by the one that is) */
 static const char *light_conf;       /* set: the shell.conf of the Light look; unset: the built-in colours */
 
@@ -108,6 +112,12 @@ static void make(rig *r, const char *look, int W, int H, float scale, int napps,
         e->content = r->app;
         e->wid = (uint32_t)(7 + i);
         e->csd = (i == 0) ? csd0 : 0;
+        if (waiting_sub) {                       /* no window yet: the card the shell shows while it waits */
+            e->wid = 0; e->content = NULL; e->starting = 1; e->csd = 0;
+            snprintf(e->title, sizeof e->title, "%s", "Internet");
+            if (e->app >= 0) snprintf(r->c.apps[e->app].hint, sizeof r->c.apps[e->app].hint, "%s", "Websites, news and shopping");
+            snprintf(e->subtitle, sizeof e->subtitle, "%s", waiting_sub);
+        }
     }
     r->c.n_wins = nwins;
     r->c.focus = (nwins && !none_in_use) ? 0 : -1;
@@ -233,6 +243,66 @@ static void floors(const char *look, int scen)
         }
 }
 
+/* ── the words on a card that is waiting for its program ───────────────────────────────────────
+ * "Still starting. This computer is taking a while." and "This is still not open. You can close this
+ * and try again." are longer than anything that sat on that card before. At the smallest panel and the
+ * largest words, in every look that draws the card: is the line drawn WHOLE (not cut to "..." by the
+ * look, not run past the edge of the card or the screen)? */
+static const char *WAITING[] = { "Starting\xE2\x80\xA6", "Still starting. This computer is taking a while.",
+                                 "This is still not open. You can close this and try again.", "This did not start" };
+
+static void waiting_card(const char *look)
+{
+    for (size_t sz = 0; sz < sizeof SIZES / sizeof *SIZES; sz++)
+        for (size_t k = 0; k < sizeof SCALES / sizeof *SCALES; k++) {
+            /* A kiosk with nine allowed apps at the biggest words on the smallest panel has no stage at all
+             * (locked.c: the strip of apps takes the screen, and the app's name stands alone): there is no
+             * card to hold any words, "Starting..." included. Said, not measured. */
+            if (!strcmp(look, "locked") && SIZES[sz].w == 1024 && SCALES[k] >= 2.f) {
+                printf("    locked 1024x600 text 200%%: no stage for any words on a kiosk of nine apps (not measured)\n");
+                continue;
+            }
+            for (size_t w = 0; w < sizeof WAITING / sizeof *WAITING; w++) {
+                static rig R; memset(&R, 0, sizeof R);
+                shell_text_log_n = 0; shell_text_log_on = 1;
+                waiting_sub = WAITING[w];
+                make(&R, look, SIZES[sz].w, SIZES[sz].h, SCALES[k], strcmp(look, "locked") ? 12 : 9, 1, 0);   /* a kiosk: nine allowed apps is its worst (locked.c) */
+                waiting_sub = NULL;
+                shell_text_log_on = 0;
+                shell_target T[96];
+                int n = R.L->targets ? R.L->targets(&R.c, T, 96) : 0;
+                rect card = { 0, 0, SIZES[sz].w, R.c.screen_h };           /* where it has to end: its card, else the screen */
+                for (int i = 0; i < n; i++) if (T[i].kind == TARGET_WINDOW) { card = T[i].r; break; }
+                if (getenv("WAIT_DUMP") && k == (size_t)(getenv("WK") ? atoi(getenv("WK")) : 1) && sz == (size_t)(getenv("WS") ? atoi(getenv("WS")) : 1)) printf("   [%s] nwins=%d focus=%d %d log entries, card %d,%d %dx%d\n", look, R.c.n_wins, R.c.focus, shell_text_log_n, card.x, card.y, card.w, card.h);
+                if (getenv("WAIT_DUMP") && k == (size_t)(getenv("WK") ? atoi(getenv("WK")) : 1) && sz == (size_t)(getenv("WS") ? atoi(getenv("WS")) : 1))
+                    for (int i = 0; i < shell_text_log_n; i++) printf("        [%s] %d,%d %dx%d \"%s\"\n", look, shell_text_log[i].x, shell_text_log[i].y, shell_text_log[i].w, shell_text_log[i].h, shell_text_log[i].s);
+                /* A line that was wrapped is drawn as several pieces, in order: join them back. */
+                const char *want = WAITING[w];
+                size_t wl = strlen(want);
+                int whole = 0, cut = 0, over = 0;
+                for (int i = 0; i < shell_text_log_n; i++) {
+                    size_t pos = 0; int pieces = 0, bad = 0;
+                    for (int j = i; j < shell_text_log_n && pos < wl; j++) {
+                        const shell_text_rec *t = &shell_text_log[j];
+                        size_t l = strlen(t->s);
+                        if (strncmp(want + pos, t->s, l)) break;
+                        if (t->x + t->w > card.x + card.w || t->x + t->w > SIZES[sz].w || t->y + t->h > card.y + card.h) bad = 1;
+                        pos += l; pieces++;
+                        if (want[pos] == ' ') pos++;
+                    }
+                    if (pos >= wl) { whole++; over += bad; i += pieces - 1; }
+                    else if (pieces == 0 && !strncmp(shell_text_log[i].s, want, wl < 12 ? wl : 12)) cut++;
+                    else if (pieces && !strncmp(shell_text_log[i].s, want, 12 < wl ? 12 : wl)) cut++;
+                }
+                char nm[220];
+                snprintf(nm, sizeof nm, "%s %dx%d text %.0f%%: \"%.28s%s\" is drawn whole, inside its card (%d whole, %d elided in a bar, %d past the edge)",
+                         look, SIZES[sz].w, SIZES[sz].h, (double)(SCALES[k] * 100.f), WAITING[w], strlen(WAITING[w]) > 28 ? "..." : "",
+                         whole, cut, over);
+                ok(nm, whole > 0 && !over);                 /* an elided copy in a title bar or a taskbar button is the look's own */
+            }
+        }
+}
+
 int main(void)
 {
     printf("the shell's floors: 18 px words, 44 px targets, windows on the screen\n");
@@ -242,6 +312,8 @@ int main(void)
     floors("dock", S_WINS);    floors("dock", S_MANY);    floors("dock", S_FIND);   floors("dock", S_HOME);   floors("dock", S_BUSY);
     floors("rail", S_WINS);    floors("rail", S_MANY);   floors("rail", S_HOME);   floors("rail", S_LIST);
     floors("tiles", S_WINS);   floors("tiles", S_MANY);   floors("tiles", S_HOME);  floors("tiles", S_PAGES);
+    printf("\nwaiting card: the words fit, at 1024x600 and the biggest words, in every look\n");
+    waiting_card("rail"); waiting_card("taskbar"); waiting_card("dock"); waiting_card("tiles"); waiting_card("workbench"); waiting_card("locked");
     /* The Light look, rendered the way contrast-test.sh renders it (aurora, from the repository root). */
     char dir[64], cmd[600];
     snprintf(dir, sizeof dir, "/tmp/floorstest.%d", (int)getpid());

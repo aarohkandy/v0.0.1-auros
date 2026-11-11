@@ -13,7 +13,8 @@ typedef struct aurwl_win aurwl_win;
 /* Reconcile the compositor's window list into c->wins, adopt
  * placeholders, and configure clients. Call once per frame, after
  * dispatching the compositor and before painting. */
-void session_sync(shell_ctx *c, const shell_layout *L);
+/* Returns 1 when the words on a waiting card changed (nothing else repaints for that). */
+int  session_sync(shell_ctx *c, const shell_layout *L);
 
 /* Route a pointer or key to the window under it. Each returns 1 if a
  * client took the event, in which case the archetype must not also act
@@ -54,6 +55,8 @@ void session_paint_cursor(shell_ctx *c, surface *fb);
 void session_paint_popups(shell_ctx *c, surface *fb);
 
 /* Assign to shell_ctx.spawn. */
-int  session_spawn(shell_ctx *c, const char *argv_blob, int n_args);
+int  session_spawn(shell_ctx *c, const char *argv_blob, int n_args);   /* the pid, or -1 */
+/* Assign to shell_ctx.proc. */
+int  session_proc(shell_ctx *c, int pid);
 
 #endif

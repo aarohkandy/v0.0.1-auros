@@ -714,17 +714,28 @@ static void paint_window(shell_ctx *c, surface *s, shell_fonts *f, int i,
     float x   = (float)body.x + (float)c->padding * 1.6f;
     float isz = clampf((float)body.h * 0.18f, 26.f, 56.f);
     float top = (float)body.y + (float)body.h * 0.30f;
-    shell_icon_draw(s, win_icon(c, i), x + isz * 0.5f, top, isz, tint, paper,
-                    alpha * 0.9f);
+    /* The words are wrapped to the window, and the block is raised (the icon dropped if need be)
+     * until it ends inside it: the waiting line is wider and taller than a small window at big words. */
+    float slh = f->small ? (font_ascent(f->small) + font_descent(f->small)) * f->lh : 24.f;
+    const char *sub = c->wins[i].subtitle[0] ? c->wins[i].subtitle : "Opening…";
+    float mw = (float)body.w - (x - (float)body.x) * 2.f;
+    int sn = shell_text_wrap(NULL, f->small, 0.f, 0.f, mw, slh, sub, 0, 0.f, 3);
+    top = shell_card_top(f->big, f->small, 26.f, 30.f, slh, sn, (float)body.y, (float)body.h, top, &isz);
+    if (isz > 0.f)
+        shell_icon_draw(s, win_icon(c, i), x + isz * 0.5f, top, isz, tint, paper, alpha * 0.9f);
+    if (isz < 0.f) {                           /* only the words fit: the title bar has the name */
+        shell_text_wrap(s, f->small, x, (float)body.y + 8.f + (f->small ? font_ascent(f->small) : 11.f),
+                        mw, slh, sub, c->subtle, alpha * 0.85f, 3);
+        return;
+    }
     float ty = top + isz * 0.5f + 26.f + (f->big ? font_ascent(f->big) : 26.f);
     shell_text(s, f->big, x, ty, c->wins[i].title, c->fg_hi, alpha * 0.9f);
     draw_hrule(s, (int)x, (int)(ty + (f->big ? font_descent(f->big) : 8.f) + 14.f),
                (int)((float)body.w * 0.16f), 1, c->overlay, alpha);
-    shell_text(s, f->small, x,
-               ty + (f->big ? font_descent(f->big) : 8.f) + 30.f
-                  + (f->small ? font_ascent(f->small) : 11.f),
-               c->wins[i].subtitle[0] ? c->wins[i].subtitle : "Opening…",
-               c->subtle, alpha * 0.85f);
+    shell_text_wrap(s, f->small, x,
+                    ty + (f->big ? font_descent(f->big) : 8.f) + 30.f
+                       + (f->small ? font_ascent(f->small) : 11.f),
+                    mw, slh, sub, c->subtle, alpha * 0.85f, 3);
 }
 
 /* ── painting: the bar ──────────────────────────────────────────────── */

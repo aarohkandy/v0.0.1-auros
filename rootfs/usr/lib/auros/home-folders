@@ -1,0 +1,58 @@
+#!/bin/sh
+# home-folders [HOME]  --  her standard folders, made if they are not there.
+#
+# Her home had only Downloads: no Documents, Pictures, Music or Videos, though the desktop offers
+# Photos and Letters and a Word file saves to Documents. build/forge ran xdg-user-dirs-update as
+# root, in the build chroot, so the folders went to /root; her account is made later (useradd -m
+# copies /etc/skel, which had none), and nothing in her session runs the program that makes them
+# at login. So they are made here, from three places:
+#
+#   build/forge     for /etc/skel (an account made later gets them) and for the account it makes
+#   aurshell.service  before every desktop start, for a home that is older than this
+#   Ferry's copy of her Windows files, which reads the same user-dirs.dirs (src/ferry)
+#
+# The folders are the six Ferry copies into (ferry-common.sh FERRY_FOLDERS). If the home already
+# has a user-dirs.dirs -- written by Ferry, by xdg-user-dirs in another language -- its names are
+# the ones made, and only when each is a plain folder inside the home: a value that climbs out or
+# names a path is not obeyed. A folder that exists is left exactly as it is (nothing is changed,
+# emptied or re-owned); a name that is a FILE, or a link, is left alone too. Never fails the start.
+#
+# Run as her (the service has User=), or by forge on a tree it then chowns. No output.
+set -u
+umask 022
+home=${1:-${HOME:-}}
+[ -n "$home" ] && [ -d "$home" ] || exit 0
+cfg=$home/.config/user-dirs.dirs
+
+if [ ! -e "$cfg" ] && [ ! -L "$cfg" ]; then
+    mkdir -p "$home/.config" 2>/dev/null || exit 0
+    # Written as xdg-user-dirs writes it, for the folders she has. Templates and Public stay off her
+    # list on purpose ("$HOME/" is the file's own word for "none").
+    cat > "$cfg" 2>/dev/null <<'EOL' || exit 0
+# This file is written by xdg-user-dirs-update
+# If you want to change or add directories, just edit the line you're
+# interested in. All local changes will be retained on the next run.
+# Format is XDG_xxx_DIR="$HOME/yyy", where yyy is a shell-escaped
+# homedir-relative path, or XDG_xxx_DIR="/yyy", where /yyy is an
+# absolute path. No other format is supported.
+#
+XDG_DESKTOP_DIR="$HOME/Desktop"
+XDG_DOWNLOAD_DIR="$HOME/Downloads"
+XDG_TEMPLATES_DIR="$HOME/"
+XDG_PUBLICSHARE_DIR="$HOME/"
+XDG_DOCUMENTS_DIR="$HOME/Documents"
+XDG_MUSIC_DIR="$HOME/Music"
+XDG_PICTURES_DIR="$HOME/Pictures"
+XDG_VIDEOS_DIR="$HOME/Videos"
+EOL
+fi
+
+for pair in DESKTOP:Desktop DOWNLOAD:Downloads DOCUMENTS:Documents MUSIC:Music PICTURES:Pictures VIDEOS:Videos; do
+    key=XDG_${pair%%:*}_DIR default=${pair#*:}
+    name=$(sed -n "s/^[[:space:]]*$key=\"\\\$HOME\\/\\([^\"]*\\)\"[[:space:]]*\$/\\1/p" "$cfg" 2>/dev/null | head -1)
+    case "$name" in
+        ''|*/*|.|..|.*) name=$default ;;          # nothing, a path, or a hidden name: the plain one
+    esac
+    [ -e "$home/$name" ] || [ -L "$home/$name" ] || mkdir "$home/$name" 2>/dev/null
+done
+exit 0

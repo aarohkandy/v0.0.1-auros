@@ -199,6 +199,30 @@ int main(void)
         unlink(link);
     }
 
+    /* What she is told after she chooses one, for every name there is: it was "works like Like
+     * Windows" (found by choosing it on a booted image). The sentence is checked word for word
+     * and for the doubled word, over the names the .shell files themselves carry. */
+    printf("\nhow this computer works: what she is told, for every name\n");
+    {
+        static const char *NAMES[] = { "Like Windows", "Like a Mac", "Big and simple", "One thing at a time" };
+        char link[1100];
+        snprintf(link, sizeof link, "%s/.config/auros/active.shell", home);
+        for (size_t k = 0; k < sizeof NAMES / sizeof NAMES[0]; k++) {
+            char want[200], w[260];
+            C.settings_open = 0; C.settings_open = 1; settings_opened(&C);
+            press("How this computer works");
+            ok(shown(NAMES[k]), NAMES[k]);
+            snprintf(w, sizeof w, "she presses \"%s\"", NAMES[k]);
+            ok(press(NAMES[k]), w);
+            snprintf(want, sizeof want, "This computer now works the way you chose: %s.", NAMES[k]);
+            snprintf(w, sizeof w, "and is told: %s", want);
+            ok(shown(want), w);
+            ok(!shown("This computer now works like Like Windows.") && !strstr(want, "like Like"),
+               "...and never \"works like Like ...\"");
+            unlink(link);
+        }
+    }
+
     /* A picture of each colour choice (the gate: "Settings Colors has no picture of each choice"): in
      * the row's left margin, a little window in that look's own paper, ink and signal colour. */
     printf("\nColors: a picture of each\n");

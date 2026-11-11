@@ -16,6 +16,8 @@
  */
 #define _GNU_SOURCE
 #include <stdio.h>
+#include <errno.h>
+#include <signal.h>
 #include <string.h>
 #include <strings.h>
 #include <time.h>
@@ -26,12 +28,6 @@
 #include "run.h"
 #include "cursor.h"
 #include "../aurwl/aurwl.h"
-
-/* An application that has not shown a window in this long has failed to
- * start in a way it is not going to recover from. The slot says so
- * rather than spinning forever: a user who clicked something that is
- * never coming needs to be told, not reassured. */
-#define START_TIMEOUT_MS 25000
 
 static uint32_t now_ms(void)
 {
@@ -86,10 +82,11 @@ _Static_assert((int)WREQ_MOVE == (int)AURWL_REQ_MOVE && (int)WREQ_MAXIMIZE == (i
                (int)WREQ_UNFULLSCREEN == (int)AURWL_REQ_UNFULLSCREEN,
                "the two sets of request bits agree");
 
-void session_sync(shell_ctx *c, const shell_layout *L)
+int session_sync(shell_ctx *c, const shell_layout *L)
 {
+    int words_changed = 0;
     void (*present)(shell_ctx *, int) = L ? L->present : NULL;
-    if (!c->wl) return;
+    if (!c->wl) return 0;
     aurwl *wl = c->wl;
 
     int seen[SHELL_MAX_WINS];
@@ -104,36 +101,11 @@ void session_sync(shell_ctx *c, const shell_layout *L)
 
         int i = slot_for_wid(c, id);
         if (i < 0) {
-            /* Adopt the placeholder the user's click created, so the
-             * window appears where they were already looking instead of
-             * arriving somewhere else while the placeholder lingers. */
-            int app = app_for_window(c, app_id);
-            /* Only a placeholder for THIS application. Adopting any
-             * pending one when the window reported no app_id -- which
-             * the comment above says is a normal thing for a toolkit to
-             * do -- meant that starting two applications in a row gave
-             * the second one's window the first one's name and icon.
-             * And it stuck: the first application's icon then raised
-             * the wrong window forever, and never launched again. */
-            if (app >= 0)
-                for (int j = 0; j < c->n_wins && i < 0; j++)
-                    if (c->wins[j].starting && !c->wins[j].wid && c->wins[j].app == app) i = j;
-            if (i < 0 && c->n_wins < SHELL_MAX_WINS) {
-                i = c->n_wins++;
-                memset(&c->wins[i], 0, sizeof c->wins[i]);
-                c->wins[i].app = app;
-            }
+            /* The placeholder the user's click created becomes this window
+             * (shell_window_arrived), so it appears where she was already
+             * looking and no card is left behind. */
+            i = shell_window_arrived(c, L, app_for_window(c, app_id), id, aurwl_win_transient_for(w));
             if (i < 0) continue;                         /* list is full */
-            c->wins[i].wid = id;
-            c->wins[i].starting = 0;
-            c->wins[i].dialog_of = aurwl_win_transient_for(w);
-            if (c->wins[i].app < 0) c->wins[i].app = app;
-            /* A window that has just appeared is the one the user is
-             * waiting for, so the archetype is asked to bring it into
-             * view rather than told which index is focused: a carousel
-             * has to scroll, a stack has to raise, and only the
-             * archetype knows which it is. */
-            if (present) present(c, i); else c->focus = i;
             /* A dialog opens IN FRONT of what it belongs to, whichever of the two mapped first:
              * VLC's first-run question (and every "Do you want to save?") must be what she sees,
              * not a card beside the program that is waiting for her answer. (F's real-Windows run,
@@ -211,14 +183,9 @@ void session_sync(shell_ctx *c, const shell_layout *L)
             shell_win_gone(c, L, i);       /* the client went away */
             continue;
         }
-        if (e->starting) {
-            if (!e->start_ms) e->start_ms = t;
-            else if (t - e->start_ms > START_TIMEOUT_MS) {
-                e->starting = 0;
-                snprintf(e->subtitle, sizeof e->subtitle, "This did not start");
-            }
-        }
+        if (shell_start_tick(c, i, t)) words_changed = 1;
     }
+    return words_changed;
 }
 
 /* ── input ──────────────────────────────────────────────────────── */
@@ -467,7 +434,20 @@ int session_spawn(shell_ctx *c, const char *argv_blob, int n_args)
     for (; i < n_args && *p; i++) { argv[i] = p; p += strlen(p) + 1; }
     argv[i] = NULL;
     if (!i) return -1;
-    return aurwl_spawn(c->wl, argv) > 0 ? 0 : -1;
+    /* The pid, so the slot can ask later whether it is still running. */
+    pid_t pid = aurwl_spawn(c->wl, argv);
+    return pid > 0 ? (int)pid : -1;
+}
+
+/* What became of a program session_spawn() started. Its own session and process group (aurwl_spawn),
+ * so a group that still has members means it, or something it started, is running; a launcher that
+ * passes the job on and exits 0 leaves an empty group and a window that comes from elsewhere. */
+int session_proc(shell_ctx *c, int pid)
+{
+    if (!c || !c->wl || pid <= 0) return PROC_UNKNOWN;
+    if (kill(-(pid_t)pid, 0) == 0 || errno == EPERM) return PROC_RUNNING;
+    int code = aurwl_kid_exit(c->wl, (pid_t)pid);
+    return code > 0 ? PROC_FAILED : PROC_HANDED_OFF;     /* 0, or not known: be generous */
 }
 
 /* ── the pointer ────────────────────────────────────────────────── */

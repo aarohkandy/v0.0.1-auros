@@ -437,8 +437,12 @@ static void paint_win(shell_ctx *c, surface *s, rect a, int wi, shell_fonts *f,
                     c->surface_c, alpha * 0.9f);
     shell_text(s, f->big, x, cy + fa(f->big, 26.f) * 0.5f, w->title, c->fg_hi, alpha * 0.95f);
     float sy = cy + fa(f->big, 26.f) * 0.5f + fdc(f->big, 8.f) + 14.f + fa(f->small, 11.f);
-    shell_text(s, f->small, x, sy,
-               w->subtitle[0] ? w->subtitle : "Opening…", c->subtle, alpha * 0.9f);
+    /* Wrapped to the card: "Still starting. This computer is taking a while." is wider than the
+     * card at the biggest words on the smallest panel, and ran off its edge. */
+    float slh = (fa(f->small, 11.f) + fdc(f->small, 4.f)) * f->lh;
+    int sn = shell_text_wrap(s, f->small, x, sy, (float)(a.w - pad * 2), slh,
+                             w->subtitle[0] ? w->subtitle : "Opening…", c->subtle, alpha * 0.9f, 3);
+    sy += slh * (float)(sn > 1 ? sn - 1 : 0);
     draw_hrule(s, (int)x, (int)(sy + fdc(f->small, 4.f) + 16.f),
                (int)((float)(a.w - pad * 2) * 0.30f), 1, c->overlay, alpha);
 }

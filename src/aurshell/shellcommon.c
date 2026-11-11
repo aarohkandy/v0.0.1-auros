@@ -640,6 +640,23 @@ static int wrap_impl(surface *s, font *f, float x, float y, float max_w,
     return used;
 }
 
+float shell_card_top(font *big, font *small, float g1, float g2, float lh, int lines,
+                     float body_y, float body_h, float top, float *isz)
+{
+    float ab = big ? font_ascent(big) : 26.f, db = big ? font_descent(big) : 8.f;
+    float as = small ? font_ascent(small) : 11.f, ds = small ? font_descent(small) : 4.f;
+    float rest = g1 + ab + db + (lines > 0 ? g2 + as + (float)(lines - 1) * lh + ds : 0.f);
+    float limit = body_y + body_h - 8.f;
+    if (top + *isz * 0.5f + rest <= limit) return top;
+    float t = limit - *isz * 0.5f - rest;
+    if (t - *isz * 0.5f >= body_y + 4.f) return t;
+    *isz = 0.f;
+    t = limit - rest;
+    float lo = body_y + 4.f - g1;
+    if (t < lo) *isz = -1.f;            /* not even the name and the words fit: the words alone */
+    return t < lo ? lo : t;
+}
+
 int shell_text_wrap(surface *s, font *f, float x, float y, float max_w,
                     float lh, const char *t, uint32_t col, float a, int max_lines)
 {
@@ -987,35 +1004,129 @@ int shell_launch(shell_ctx *c, int app)
 
     /* Already running and not adopted-away: raise rather than start a
      * second copy. Most applications are single-instance anyway and
-     * would silently do nothing, which looks like a broken icon. */
-    for (int i = 0; i < c->n_wins; i++)
-        if (c->wins[i].app == app) {
-            c->wins[i].minimised = 0;
+     * would silently do nothing, which looks like a broken icon.
+     *
+     * EXCEPT a card that says it did not start: its program has gone and never
+     * showed a window, so raising it did nothing she could see, and she pressed
+     * Internet again and again. That card starts the program again, in place --
+     * one entry, back to "Starting..." -- unless the process is somehow still
+     * there, which is raised as ever (no second copy of a browser). */
+    int i = -1;
+    for (int j = 0; j < c->n_wins; j++)
+        if (c->wins[j].app == app) { i = j; break; }
+    if (i >= 0) {
+        win_entry *d = &c->wins[i];
+        int dead = !d->wid && !d->starting && c->spawn && c->apps[app].exec[0] &&
+                   !(c->proc && d->pid > 0 && c->proc(c, d->pid) == PROC_RUNNING);
+        if (!dead) {
+            d->minimised = 0;
             c->focus = i;
             return i;
         }
-
-    if (c->n_wins >= SHELL_MAX_WINS) return -1;
-    int i = c->n_wins++;
+        d->minimised = 0;
+        d->starting = 1;
+        d->start_ms = 0;
+        d->pid = 0;
+        copy_str(d->subtitle, sizeof d->subtitle, "Starting…");
+        c->focus = i;
+    } else {
+        if (c->n_wins >= SHELL_MAX_WINS) return -1;
+        i = c->n_wins++;
+        memset(&c->wins[i], 0, sizeof c->wins[i]);
+        c->wins[i].app = app;
+        c->wins[i].starting = 1;
+        copy_str(c->wins[i].title,    sizeof c->wins[i].title,    c->apps[app].name);
+        copy_str(c->wins[i].subtitle, sizeof c->wins[i].subtitle, "Starting…");
+        c->focus = i;
+    }
     win_entry *w = &c->wins[i];
-    memset(w, 0, sizeof *w);
-    w->app = app;
-    w->starting = 1;
-    copy_str(w->title,    sizeof w->title,    c->apps[app].name);
-    copy_str(w->subtitle, sizeof w->subtitle, "Starting…");
-    c->focus = i;
 
     if (c->spawn && c->apps[app].exec[0]) {
-        if (c->spawn(c, c->apps[app].exec, c->apps[app].n_args) < 0) {
+        int rc = c->spawn(c, c->apps[app].exec, c->apps[app].n_args);
+        if (rc < 0) {
             copy_str(w->subtitle, sizeof w->subtitle, "Could not start");
             w->starting = 0;
-        }
+        } else w->pid = rc;                  /* the process, or 0 when it is not said */
     } else if (!c->apps[app].exec[0]) {
         /* An entry with nothing behind it is the shell's own -- Settings
          * today. Saying so beats a slot that waits forever. */
         copy_str(w->subtitle, sizeof w->subtitle, c->apps[app].hint);
         w->starting = 0;
     }
+    return i;
+}
+
+/* The words for a wait. A program that has not shown a window is not a program
+ * that has failed: only "it has gone and left nothing" is said as failure. */
+#define SAY_STILL_STARTING "Still starting. This computer is taking a while."
+#define SAY_NOT_OPENING    "This is still not open. You can close this and try again."
+#define SAY_FAILED         "This did not start"
+
+/* Says it, and tells the caller (1) only when the words are not already those: the screen is
+ * painted when something changed, and a card whose line changed on its own, with no key and no
+ * window, changed nothing that repainted it. */
+static int say(win_entry *w, const char *s)
+{
+    if (!strcmp(w->subtitle, s)) return 0;
+    copy_str(w->subtitle, sizeof w->subtitle, s);
+    return 1;
+}
+
+int shell_start_tick(shell_ctx *c, int i, uint32_t t)
+{
+    if (!c || i < 0 || i >= c->n_wins) return 0;
+    win_entry *e = &c->wins[i];
+    if (!e->starting || e->wid) return 0;
+    if (!e->start_ms) { e->start_ms = t ? t : 1; return 0; }
+    uint32_t waited = t - e->start_ms;
+    int st = (c->proc && e->pid > 0) ? c->proc(c, e->pid) : PROC_UNKNOWN;
+
+    if (st == PROC_FAILED) { e->starting = 0; return say(e, SAY_FAILED) | 1; }
+    if (st == PROC_RUNNING) {
+        if (waited >= START_STUCK_MS) return say(e, SAY_NOT_OPENING);
+        if (waited >= START_SLOW_MS) return say(e, SAY_STILL_STARTING);
+        return 0;
+    }
+    /* Gone and well, or not able to be asked: the window may still come from
+     * whatever it handed the job to. */
+    if (waited >= START_HANDOFF_MS) { e->starting = 0; return say(e, SAY_FAILED) | 1; }
+    if (waited >= START_SLOW_MS) return say(e, SAY_STILL_STARTING);
+    return 0;
+}
+
+/* A window of application `app` (-1: it reported none) has mapped, as `id`.
+ * Any slot of this application that has no window yet takes it -- one that
+ * gave up included: the program is here, and a second entry beside a card that
+ * says it did not start is the one thing worse than being late.
+ *
+ * Only a placeholder for THIS application. Adopting any pending one when the
+ * window reported no app_id -- which a toolkit may do -- gave the second of two
+ * programs started in a row the first one's name and icon, and that stuck: the
+ * first one's icon then raised the wrong window for ever and never launched
+ * again. Returns the slot, or -1 when the list is full. */
+int shell_window_arrived(shell_ctx *c, const shell_layout *L, int app, uint32_t id, uint32_t dialog_of)
+{
+    int i = -1;
+    if (app >= 0)
+        for (int j = 0; j < c->n_wins && i < 0; j++)
+            if (!c->wins[j].wid && c->wins[j].app == app) i = j;
+    if (i < 0 && c->n_wins < SHELL_MAX_WINS) {
+        i = c->n_wins++;
+        memset(&c->wins[i], 0, sizeof c->wins[i]);
+        c->wins[i].app = app;
+    }
+    if (i < 0) return -1;
+    c->wins[i].wid = id;
+    c->wins[i].starting = 0;
+    c->wins[i].pid = 0;
+    /* What the wait said ("Still starting...", "This did not start") is not true
+     * of a window: the program's own line (its hint) takes its place. */
+    c->wins[i].subtitle[0] = 0;
+    c->wins[i].dialog_of = dialog_of;
+    /* The one the user is waiting for: the archetype is asked to bring it into
+     * view rather than told which index is focused -- a carousel has to scroll,
+     * a stack has to raise, and only the archetype knows which it is. */
+    if (L && L->present) L->present(c, i); else c->focus = i;
     return i;
 }
 

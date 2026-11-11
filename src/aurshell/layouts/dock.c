@@ -449,19 +449,33 @@ static void paint_win(shell_ctx *c, surface *s, shell_fonts *f, int i, int focus
         float x    = (float)body.x + (float)c->padding * 1.6f;
         float isz  = clampf((float)body.h * 0.18f, 20.f, 54.f);
         const char *hint = (w->app >= 0) ? c->apps[w->app].hint : "";
-        int two = (body.h > 170 && hint[0]);
+        /* The line about the wait ("Still starting...") is what she needs on a short window, more than the hint. */
+        int two = (body.h > 170 && hint[0]) || (body.h > 100 && w->subtitle[0]);
         float top = (float)body.y + (float)body.h * 0.30f;
+        float slh = f->small ? (font_ascent(f->small) + font_descent(f->small)) * f->lh : 24.f;
+        const char *sub = w->subtitle[0] ? w->subtitle : hint;
+        float mw = (float)body.w - (x - (float)body.x) * 2.f;
+        /* The words wrap to the window, and the block is raised (the icon dropped if need be) until it
+         * ends inside it, the way a short window on a small panel needs. */
+        int sn = two ? shell_text_wrap(NULL, f->small, 0.f, 0.f, mw, slh, sub, 0, 0.f, 3) : 0;
+        top = shell_card_top(f->big, f->small, 24.f, 28.f, slh, sn, (float)body.y, (float)body.h, top, &isz);
+        if (isz < 0.f && !two) isz = 0.f;
 
-        shell_icon_draw(s, ic, x + isz * 0.5f, top, isz, tint, paper, al * 0.9f);
-        float y1 = top + isz * 0.5f + 24.f + (f->big ? font_ascent(f->big) : 26.f);
+        if (isz > 0.f) shell_icon_draw(s, ic, x + isz * 0.5f, top, isz, tint, paper, al * 0.9f);
+        if (isz < 0.f) {                       /* only the words fit: the title bar has the name */
+            shell_text_wrap(s, f->small, x, (float)body.y + 8.f + (f->small ? font_ascent(f->small) : 11.f),
+                            mw, slh, sub, c->subtle, al * 0.85f, 3);
+        } else {
+        float y1 = top + (isz > 0.f ? isz : 0.f) * 0.5f + 24.f + (f->big ? font_ascent(f->big) : 26.f);
         shell_text(s, f->big, x, y1, w->title, c->fg_hi, al * 0.9f);
         if (two) {
             draw_hrule(s, (int)x, (int)(y1 + (f->big ? font_descent(f->big) : 8.f) + 13.f),
                        (int)((float)body.w * 0.16f), 1, c->overlay, al);
-            shell_text(s, f->small, x,
-                       y1 + (f->big ? font_descent(f->big) : 8.f) + 28.f
-                          + (f->small ? font_ascent(f->small) : 11.f),
-                       w->subtitle[0] ? w->subtitle : hint, c->subtle, al * 0.85f);
+            shell_text_wrap(s, f->small, x,
+                            y1 + (f->big ? font_descent(f->big) : 8.f) + 28.f
+                               + (f->small ? font_ascent(f->small) : 11.f),
+                            mw, slh, sub, c->subtle, al * 0.85f, 3);
+        }
         }
     }
 

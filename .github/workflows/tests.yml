@@ -736,6 +736,9 @@ jobs:
       - name: wltest-dialog (a dialog opens in front of its program in either mapping order)
         if: ${{ matrix.part == 'checks' }}
         run: timeout 300 sh tools/wltest-dialog.sh 2>&1 | tee transcripts/wltest-dialog.txt
+      - name: wltest-spawn (a program starts in her home folder; running, handed off and failed are told apart; ASan + UBSan)
+        if: ${{ matrix.part == 'checks' }}
+        run: timeout 300 sh tools/wltest-spawn.sh -asan 2>&1 | tee transcripts/wltest-spawn.txt
       - name: wltest-deco (a program's own title bar, the keyboard, the menus)
         if: ${{ matrix.part == 'checks' }}
         run: sh tools/wltest-deco.sh 2>&1 | tee transcripts/wltest-deco.txt

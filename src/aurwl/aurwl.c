@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pwd.h>
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
@@ -389,6 +390,11 @@ struct aurwl {
 
     pid_t               kids[64];
     int                 n_kids;
+    /* How the programs aurwl_spawn() started ended, newest over oldest:
+     * the shell asks (aurwl_kid_exit) whether a program that showed no
+     * window died or only passed the job on. */
+    struct { pid_t pid; int code; } gone[32];
+    unsigned            n_gone;
 };
 
 /* ── X11 windows (xwm.inc, included below) ─────────────────────── */
@@ -4089,6 +4095,17 @@ pid_t aurwl_spawn(aurwl *c, const char *const argv[])
          * meant for one program is not delivered to the desktop. */
         setsid();
         signal(SIGPIPE, SIG_DFL);
+        /* HER FOLDER, NOT /. The shell is a system service and has no working
+         * directory of its own, so every program inherited `/`: "Your files"
+         * opened on bin, boot, dev, etc, and a Save dialog started there too.
+         * Chosen here, for the child only, so it holds for whatever is started
+         * and the shell itself stays where it is. */
+        {
+            const char *h = getenv("HOME");
+            struct passwd *pw = (h && h[0] == '/') ? NULL : getpwuid(getuid());
+            if (pw && pw->pw_dir) h = pw->pw_dir;
+            if (h && h[0] == '/' && chdir(h) != 0) { /* no such folder: stay where we are */ }
+        }
         setenv("WAYLAND_DISPLAY", c->socket, 1);
         if (c->x.enabled) {        /* X programs find Xwayland (started when they connect) */
             char d[16]; snprintf(d, sizeof d, ":%d", c->x.display);
@@ -4139,10 +4156,24 @@ void aurwl_reap(aurwl *c)
          * collected, or never was), and either way the slot is stale. */
         if (p != 0) {
             pid_t done = c->kids[i];
+            if (p > 0) {
+                unsigned g = c->n_gone++ % (unsigned)(sizeof c->gone / sizeof c->gone[0]);
+                c->gone[g].pid = done;
+                c->gone[g].code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+            }
             c->kids[i] = c->kids[--c->n_kids];
             xw_reaped(c, done, p > 0 ? status : 0);        /* Xwayland has gone: the next X program starts a new one */
         }
     }
+}
+
+int aurwl_kid_exit(const aurwl *c, pid_t pid)
+{
+    if (!c) return -1;
+    unsigned n = c->n_gone < sizeof c->gone / sizeof c->gone[0] ? c->n_gone : (unsigned)(sizeof c->gone / sizeof c->gone[0]);
+    for (unsigned i = 0; i < n; i++)
+        if (c->gone[i].pid == pid) return c->gone[i].code;
+    return -1;
 }
 
 const char *aurwl_x_display(aurwl *c)

@@ -197,6 +197,38 @@ findable "$F" "$SP" "$T/viewer.desktop" && ok "a link through /etc/alternatives 
 ln -s /usr/bin/nowhere "$F/usr/bin/gone"; printf '[Desktop Entry]\nExec=gone\n' > "$T/gone.desktop"
 findable "$F" "$SP" "$T/gone.desktop" && bad "a broken link counts as found" || ok "a broken link is not found, as the shell would not find it"
 
+# ── her folders ─────────────────────────────────────────────────────
+# Her home had only Downloads: forge ran xdg-user-dirs-update as root in the build chroot (the
+# folders went to /root), and the account made later from /etc/skel got none.
+echo
+echo "her folders (rootfs/usr/lib/auros/home-folders)"
+HF=rootfs/usr/lib/auros/home-folders
+H1="$T/home1"; mkdir -p "$H1"
+sh "$HF" "$H1"
+miss=""; for d in Desktop Documents Downloads Music Pictures Videos; do [ -d "$H1/$d" ] || miss="$miss $d"; done
+[ -z "$miss" ] && ok "a new home gets Desktop, Documents, Downloads, Music, Pictures and Videos" || bad "a new home is missing:$miss"
+grep -q '^XDG_DOCUMENTS_DIR="$HOME/Documents"' "$H1/.config/user-dirs.dirs" 2>/dev/null \
+    && ok "...and user-dirs.dirs names them, so programs save there" || bad "user-dirs.dirs does not name Documents"
+echo "keep" > "$H1/Documents/a.txt"; mkdir "$H1/Pictures/trip"
+sh "$HF" "$H1"
+[ "$(cat "$H1/Documents/a.txt")" = keep ] && [ -d "$H1/Pictures/trip" ] && ok "run again: folders that exist are left as they are" || bad "a second run changed her folders"
+H2="$T/home2"; mkdir -p "$H2/.config"
+printf 'XDG_DOCUMENTS_DIR="$HOME/Dokumente"\nXDG_PICTURES_DIR="$HOME/../escape"\nXDG_MUSIC_DIR="/etc"\n' > "$H2/.config/user-dirs.dirs"
+sh "$HF" "$H2"
+if [ -d "$H2/Dokumente" ] && [ ! -d "$H2/Documents" ] && [ ! -e "$T/escape" ] && [ -d "$H2/Pictures" ] && [ -d "$H2/Music" ]; then
+    ok "a home with its own names keeps them; a name that climbs out or points elsewhere is not obeyed"
+else bad "a home with its own user-dirs.dirs was not respected, or an unsafe name was followed"; fi
+H3="$T/home3"; mkdir -p "$H3"; : > "$H3/Documents"; ln -s /nonexistent "$H3/Music"
+sh "$HF" "$H3" && [ -f "$H3/Documents" ] && [ -L "$H3/Music" ] && ok "a FILE or a link where a folder belongs is left alone, and it does not fail" || bad "a file or link in the way was replaced, or it failed"
+sh "$HF" "$T/no-such-home"; [ $? = 0 ] && ok "no home at all: nothing happens, and it does not fail" || bad "a missing home made it fail"
+n=$(grep -n 'home-folders" "$RFS/etc/skel"' build/forge | head -1 | cut -d: -f1)
+u=$(grep -n 'useradd -m' build/forge | head -1 | cut -d: -f1)
+if [ -n "$n" ] && [ -n "$u" ] && [ "$n" -lt "$u" ]; then ok "build/forge fills /etc/skel before it makes the account"; else bad "build/forge does not fill /etc/skel before useradd"; fi
+grep -q '^[[:space:]]*inchroot "xdg-user-dirs-update' build/forge && bad "build/forge still runs xdg-user-dirs-update as root in the chroot (the folders go to /root)" || ok "build/forge no longer makes her folders in /root"
+grep -q '^ExecStartPre=-/usr/lib/auros/home-folders' rootfs/etc/systemd/system/aurshell.service \
+    && ok "the desktop's unit makes them before each start (a home from before this, or made by hand)" || bad "aurshell.service does not run home-folders"
+[ -x "$HF" ] && ok "home-folders is executable" || bad "home-folders is not executable"
+
 # ── the built image ─────────────────────────────────────────────────
 echo
 LDSO="$RFS/lib64/ld-linux-x86-64.so.2"
@@ -208,6 +240,18 @@ if [ ! -d "$RFS/etc" ] || [ ! -x "$LDSO" ]; then
     exit 0
 fi
 echo "the built image ($RFS)"
+
+# Her folders, in the image: /etc/skel (an account made later) and the account forge made.
+miss=""; for d in Desktop Documents Downloads Music Pictures Videos; do [ -d "$RFS/etc/skel/$d" ] || miss="$miss $d"; done
+[ -z "$miss" ] && ok "/etc/skel has her folders (a new account starts with them)" || bad "/etc/skel is missing:$miss"
+DU=$(sed -n 's/^default_user[[:space:]]*=[[:space:]]*"\{0,1\}\([A-Za-z0-9_-]*\).*/\1/p' "$PROFILE" | head -1)
+if [ -n "$DU" ] && [ -d "$RFS/home/$DU" ]; then
+    miss=""; for d in Desktop Documents Downloads Music Pictures Videos; do [ -d "$RFS/home/$DU/$d" ] || miss="$miss $d"; done
+    [ -z "$miss" ] && ok "$DU's home has her folders" || bad "$DU's home is missing:$miss"
+    owner=$(stat -c %U "$RFS/home/$DU/Documents" 2>/dev/null)
+    [ "$owner" = "$DU" ] && ok "...and they are hers" || bad "$DU's Documents belongs to '$owner'"
+fi
+[ -x "$RFS/usr/lib/auros/home-folders" ] && ok "the image carries home-folders" || bad "the image has no executable home-folders"
 
 ns=$(sed -n 's/^hosts:[[:space:]]*//p' "$RFS/etc/nsswitch.conf")
 case "$ns" in

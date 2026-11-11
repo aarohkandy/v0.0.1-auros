@@ -149,6 +149,22 @@ ferry-files --root "$WIN" --home "$HOME1" --owner "$OWNER" >/dev/null 2>&1
 AFTER=$(find "$HOME1" -type f | wc -l)
 eq "re-run is idempotent (no new files)" "$AFTER" "$BEFORE"
 
+echo "a home the desktop made (rootfs/usr/lib/auros/home-folders) already has every folder:"
+HF="$TMP/homefolders"; mkdir -p "$HF"
+sh "$FERRY/../../rootfs/usr/lib/auros/home-folders" "$HF"
+hers "$HF"
+HFS="$TMP/state-hf"
+FERRY_STATE="$HFS" ferry-files --root "$WIN" --home "$HF" --owner "$OWNER" >/dev/null 2>&1; HFRC=$?
+# 2 is the answer for this fake tree whatever the home: its Videos are on drive D: (off-volume, skipped).
+eq "ferry-files runs to the end over folders that already exist (2: Videos is on another drive)" "$HFRC" 2
+assert "...Documents: her letter lands in the folder the desktop made" test -f "$HF/Documents/letter.docx"
+assert "...Desktop: so does her Windows desktop" test -f "$HF/Desktop/report.docx"
+eq "...and there is one Documents, not two" "$(ls -d "$HF"/Doc* | wc -l | tr -d ' ')" 1
+eq "...and user-dirs.dirs is the desktop's own, not rewritten" "$(grep -c 'Written by Ferry' "$HF/.config/user-dirs.dirs")" 0
+HFN=$(find "$HF" -type f | wc -l | tr -d ' ')
+FERRY_STATE="$HFS" ferry-files --root "$WIN" --home "$HF" --owner "$OWNER" >/dev/null 2>&1
+eq "...and a second run adds nothing" "$(find "$HF" -type f | wc -l | tr -d ' ')" "$HFN"
+
 echo "copier:"
 assert "a OneDrive file that IS on this computer comes across (cloud tag and all)" \
     grep -qx 'BUDGET-real-bytes' "$HOME1/Documents/budget.xlsx"

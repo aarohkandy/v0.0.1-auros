@@ -529,7 +529,12 @@ taught people to ignore the check, which is the only way a check like
 this really dies.
 
 `closetest` asks the question after it: a program closes, and what is she looking at? Every look, through
-`shell_win_gone()`, the path a real program takes on its way out.
+`shell_win_gone()`, the path a real program takes on its way out. It also holds the other end of a program's
+life, a slow one: a program still starting after the old 25-second limit is not called a failure, its window
+(through `shell_window_arrived()`, the one place a window meets its card) takes the card however late, and
+only a program that died with no window, or a launcher that handed off and showed nothing in five minutes,
+reads "This did not start". The clock and the process are pretended; `wltest-spawn` runs the real ones (a
+program starts in her home folder, and running, handed off and failed are told apart).
 
 `launchtest` answers the first question a desktop has to answer: can she
 start a program by clicking on it? This product answered "no" for its
