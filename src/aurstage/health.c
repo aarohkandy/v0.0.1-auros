@@ -108,6 +108,19 @@ int power_ok(const power_state *p, char *why, size_t n)
     return 0;
 }
 
+int power_still_ok(const power_state *first, const power_state *now,
+                   char *why, size_t n)
+{
+    if (first->has_battery && !now->has_battery) {
+        snprintf(why, n,
+                 "AurOS can no longer see this computer's battery, so it cannot "
+                 "tell whether it is plugged in. The next step cannot be "
+                 "stopped once it starts.");
+        return 0;
+    }
+    return power_ok(now, why, n);
+}
+
 /* ── the drive ───────────────────────────────────────────────────────
  *
  * SMART, read through the kernel's SCSI generic pass-through, which is

@@ -181,18 +181,22 @@ static void give_up(const char *why, const char *remedy, const char *verdict,
     stop_and_restart();
 }
 
+static power_state g_first_power;   /* the first look, kept for the second */
+
 /* THE POWER, LOOKED AT AGAIN JUST BEFORE THE LINE. The first look is minutes
  * earlier: after it come the hash of everything Windows wrote, the read of
  * every sector about to be freed and the copy of her Windows start-up, which on
  * a spinning disk is a long time for a charger to be knocked out of a laptop.
  * ntfsresize cannot be stopped without leaving the drive to be checked, so
  * "it was plugged in when we started" is not the question; "is it now" is.
+ * A battery seen at the first look and not at this one refuses too: a laptop
+ * that cannot be read is not a desktop.
  * Called with nothing changed, so it is an ordinary refusal. */
 static void power_still_on(void)
 {
     power_state pw; char pwhy[200];
     power_read(NULL, &pw);
-    if (!power_ok(&pw, pwhy, sizeof pwhy))
+    if (!power_still_ok(&g_first_power, &pw, pwhy, sizeof pwhy))
         refuse(pwhy, "Plug it in and try again.",
                "on-battery");
 }
@@ -362,6 +366,7 @@ static void install_gap(const stage_machine *m, journal *j)
     stage_say("drive    %s", sm.why);
     power_state pw; char pwhy[200];
     power_read(NULL, &pw);
+    g_first_power = pw;
     if (!power_ok(&pw, pwhy, sizeof pwhy))
         refuse(pwhy, "Plug it in and try again.", "on-battery");
 
@@ -749,6 +754,7 @@ void install_run(const stage_machine *m)
     /* And whether it would survive being operated on. */
     power_state pw; char pwhy[200];
     power_read(NULL, &pw);
+    g_first_power = pw;
     if (!power_ok(&pw, pwhy, sizeof pwhy))
         refuse(pwhy, "Plug it in and try again.", "on-battery");
     stage_say("power    %s", pwhy);

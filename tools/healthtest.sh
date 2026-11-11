@@ -73,6 +73,16 @@ int main(int argc, char **argv)
         printf("why=%s\n", why);
         return go ? 0 : 1;
     }
+    /* The second look: power again <first-root> <second-root>. */
+    if (argc >= 4 && !strcmp(argv[1], "again")) {
+        power_state first, now; char why[200];
+        power_read(argv[2], &first);
+        power_read(argv[3], &now);
+        int go = power_still_ok(&first, &now, why, sizeof why);
+        printf("go=%d\n", go);
+        printf("why=%s\n", why);
+        return go ? 0 : 1;
+    }
     if (argc >= 2 && !strcmp(argv[1], "smart")) {
         unsigned char page[512];
         memset(page, 0, sizeof page);
@@ -90,7 +100,7 @@ int main(int argc, char **argv)
         printf("remedy=%s\n", st.remedy);
         return st.verdict == SMART_FAILING ? 1 : 0;
     }
-    fputs("usage: h power <sysfs-root> | h smart <id> <raw> ...\n", stderr);
+    fputs("usage: h power <sysfs-root> | h again <first> <second> | h smart <id> <raw> ...\n", stderr);
     return 2;
 }
 EOC
@@ -143,6 +153,34 @@ R="$TMP/ps-usbc"; mkps "$R/ucsi" USB_PD 1; mkps "$R/BAT0" Battery "" 20 Charging
 FIELD=go; got=$(field power "$R")
 [ "$got" = "1" ] && ok "a USB-C charger counts as being plugged in" \
                  || bad "a USB-C charger counts as being plugged in" "go=$got"
+
+# THE SECOND LOOK, just before the line. A machine that showed a battery at
+# the first look and shows none now is a laptop that could not be read, not
+# a desktop, and the second look must not wave it through.
+R="$TMP/ps-gone"; mkdir -p "$R"      # a sysfs that has lost everything
+FIELD=go
+got=$(field again "$TMP/ps-plugged" "$TMP/ps-plugged")
+[ "$got" = "1" ] && ok "again: battery and mains, then battery and mains, is allowed" \
+                 || bad "again: battery and mains, then battery and mains, is allowed" "go=$got"
+got=$(field again "$TMP/ps-plugged" "$TMP/ps-unplugged")
+[ "$got" = "0" ] && ok "again: unplugged since the first look is refused" \
+                 || bad "again: unplugged since the first look is refused" "go=$got"
+got=$(field again "$TMP/ps-unplugged" "$TMP/ps-unplugged")
+[ "$got" = "0" ] && ok "again: a battery with no mains at both looks is refused" \
+                 || bad "again: a battery with no mains at both looks is refused" "go=$got"
+got=$(field again "$TMP/ps-plugged" "$R")
+[ "$got" = "0" ] && ok "again: a battery at the first look and nothing now is refused" \
+                 || bad "again: a battery at the first look and nothing now is refused" "go=$got"
+got=$(field again "$TMP/ps-plugged" "$TMP/does-not-exist")
+[ "$got" = "0" ] && ok "again: a battery at the first look and an unreadable sysfs is refused" \
+                 || bad "again: a battery at the first look and an unreadable sysfs is refused" "go=$got"
+got=$(field again "$TMP/ps-desktop" "$TMP/ps-desktop")
+[ "$got" = "1" ] && ok "again: a desktop that showed no battery at either look is allowed" \
+                 || bad "again: a desktop that showed no battery at either look is allowed" "go=$got"
+FIELD=why; case "$(field again "$TMP/ps-plugged" "$R")" in
+  *"no longer see"*"battery"*) ok "...and she is told AurOS can no longer see the battery" ;;
+  *) bad "...and she is told AurOS can no longer see the battery" "it said: $(field again "$TMP/ps-plugged" "$R")" ;;
+esac
 
 echo
 echo "  the drive"
@@ -220,9 +258,17 @@ sed -n '/^static void power_still_on/,/^}/p' src/aurstage/install.c > "$TMP/psl.
 grep -q 'Nothing has been changed' "$TMP/psl.txt" \
   && bad "the power refusal does not claim nothing was changed (untrue on the fast path)" "$(cat "$TMP/psl.txt")" \
   || ok "the power refusal does not claim nothing was changed (untrue on the fast path)"
-grep -q 'power_read(NULL' "$TMP/psl.txt" && grep -q '!power_ok' "$TMP/psl.txt" && grep -q '"on-battery"' "$TMP/psl.txt" \
+grep -q 'power_read(NULL' "$TMP/psl.txt" && grep -q '!power_still_ok(&g_first_power' "$TMP/psl.txt" && grep -q '"on-battery"' "$TMP/psl.txt" \
   && ok "...and that look refuses, with nothing changed, when it is not on the mains" \
   || bad "...and that look refuses, with nothing changed, when it is not on the mains" "$(cat "$TMP/psl.txt")"
+# ...and it is given the FIRST look to compare with: both first looks (the
+# gap path and the whole install) keep what they saw.
+kept=$(grep -c 'g_first_power = pw;' src/aurstage/install.c)
+firsts=$(grep -c 'power_read(NULL, &pw);' src/aurstage/install.c)
+# one of the power_read calls is the second look itself (in power_still_on)
+[ "$kept" -ge 2 ] && [ "$((firsts - 1))" = "$kept" ] \
+  && ok "...and each first look is kept for the second to compare with" \
+  || bad "...and each first look is kept for the second to compare with" "$kept kept of $((firsts - 1)) first looks"
 
 echo
 if [ "$fail" -gt 0 ]; then

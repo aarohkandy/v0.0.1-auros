@@ -52,6 +52,15 @@ void power_read(const char *root, power_state *out);
  * sentence naming what is wrong, in her words. */
 int  power_ok(const power_state *p, char *why, size_t n);
 
+/* The same question asked again, just before the line, by a caller that
+ * kept the first look. A machine that showed a battery then and shows
+ * none now is not a desktop: it is a laptop whose power supplies could
+ * not be read, and "nothing reported" is what power_ok calls plugged
+ * into the wall. So that refuses; a desktop that showed no battery at
+ * either look still passes. */
+int  power_still_ok(const power_state *first, const power_state *now,
+                    char *why, size_t n);
+
 /* ── the drive ───────────────────────────────────────────────────── */
 
 typedef enum {
