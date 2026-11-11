@@ -3,9 +3,14 @@
 
 #include <stddef.h>
 
-/* Turn one of the five checked-in image profiles into its fixed basename.
- * This is deliberately an enum-by-string, not a path sanitizer: no recipe or
- * caller may supply a filename, a separator, or a new profile implicitly. */
+/* 1 if this is a name a profile may have: [a-z0-9-], 1-32 characters, not
+ * starting or ending with a dash. The only gate between a profile name and
+ * a file name, a journal field or a manifest field. */
+int ab_profile_name_ok(const char *profile);
+
+/* Turn a profile name into its fixed basename "auros-<profile>.img", or fail
+ * closed (-1, empty output) for anything ab_profile_name_ok refuses. No
+ * recipe or caller may supply a filename or a separator. */
 int ab_profile_image_name(const char *profile, char *out, size_t cap);
 
 #endif

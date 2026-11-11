@@ -255,12 +255,26 @@ static const struct { const wchar_t *label; page_id first; } RAIL[] = {
     { L"Install",             PAGE_PROGRESS },
 };
 #define N_RAIL ((int)(sizeof RAIL / sizeof RAIL[0]))
+#define RAIL_LOOK 1                              /* the "Pick a look" step */
+
+/* AN INSTALLER FOR A PROFILE THAT FIXES ITS OWN LOOK (a kiosk; one that
+ * forbids theme changes) HAS NO LOOK PAGE: she is never offered a choice the
+ * image would then ignore. The step and the page are both left out. */
+static int look_offered(void)
+{
+    return ab_profile_look_offered();
+}
+static int rail_n(void)         { return N_RAIL - (look_offered() ? 0 : 1); }
+static int rail_shown(int i)    { return i != RAIL_LOOK || look_offered(); }
+static int rail_slot(int i)     { return i - ((!look_offered() && i > RAIL_LOOK) ? 1 : 0); }
+/* Where a clean first check goes, and where Back from Ready goes. */
+static page_id after_check(void) { return look_offered() ? PAGE_STYLE : PAGE_READY; }
 
 static int rail_index_for(page_id p)
 {
     if (p == PAGE_BLOCKED) return 0;            /* stopped at the check */
     for (int i = N_RAIL - 1; i >= 0; i--)
-        if (p >= RAIL[i].first) return i;
+        if (p >= RAIL[i].first) return rail_slot(i);
     return 0;
 }
 
@@ -1217,7 +1231,7 @@ static int nav_allowed(page_id p)
     if (!g_pf_valid || !pf_is_go(&g_report)) return 0;
 
     switch (p) {
-    case PAGE_STYLE:    return 1;
+    case PAGE_STYLE:    return look_offered();
     case PAGE_READY:    return style_ok();
     /* Reachable only through check_advance(), after a check run when
      * she pressed "Install AurOS" has come back clean. */
@@ -1514,7 +1528,20 @@ static void recipe_defaults(void)
 {
     const ab_baked_recipe *recipe = ab_recipe_baked();
     g_recipe_theme[0] = 0;
-    if (!recipe) return;
+    if (!recipe) {
+        /* An installer for a profile other than desktop starts the look page
+         * on that profile's own look ("" = the wizard's built-in default,
+         * which is what desktop ships). Its theme is applied in
+         * choices_from_page through ab_profile_apply_look. */
+        const char *look = ab_profile_look();
+        for (int i = 0; look[0] && i < N_STYLES; i++) {
+            if (strcmp(STYLES[i].shell, look) == 0) {
+                g_sel_style = i;
+                break;
+            }
+        }
+        return;
+    }
     for (int i = 0; i < N_STYLES; i++) {
         if (strcmp(STYLES[i].shell, recipe->look) == 0) {
             g_sel_style = i;
@@ -1531,6 +1558,10 @@ static void choices_from_page(ab_choice *c)
     _snprintf(c->shell_archetype, sizeof c->shell_archetype - 1, "%s", STYLES[s].shell);
     _snprintf(c->theme, sizeof c->theme - 1, "%s",
               g_recipe_theme[0] ? g_recipe_theme : STYLES[s].theme);
+    /* The profile's rule for the look (recipe.c): none at all where the image
+     * decides, the profile's own theme where it names one. */
+    ab_profile_apply_look(c->shell_archetype, sizeof c->shell_archetype,
+                          c->theme, sizeof c->theme);
     _snprintf(c->language, sizeof c->language - 1, "%s", g_lang_v[g_sel_lang]);
     _snprintf(c->keyboard, sizeof c->keyboard - 1, "%s", g_kbd_v[g_sel_kbd]);
     _snprintf(c->timezone, sizeof c->timezone - 1, "%s", g_tz_v[g_sel_tz]);
@@ -1558,7 +1589,7 @@ static void choices_from_page(ab_choice *c)
  * one writes while the other reads. */
 static void choice_image_source(ab_choice *c)
 {
-    char image_name[40];
+    char image_name[48];
     memset(c, 0, sizeof *c);
     _snprintf(c->profile, sizeof c->profile - 1, "%s", ab_recipe_image_profile());
     if (ab_profile_image_name(c->profile, image_name, sizeof image_name) != 0)
@@ -2004,7 +2035,7 @@ static void draw_steps(void)
         /* not on the install page: it counts the install's own steps */
         if (g_page != PAGE_PROGRESS) {
             wchar_t st[48];
-            _snwprintf(st, 47, L"Step %d of %d", cur + 1, N_RAIL);
+            _snwprintf(st, 47, L"Step %d of %d", cur + 1, rail_n());
             st[47] = 0;
             RECT b = { ex + S(24), y, g_body.right, y + h };
             text_in(st, g_f_small, C_INK2, b, DT_SINGLELINE | DT_VCENTER);
@@ -2015,23 +2046,25 @@ static void draw_steps(void)
     int x = S(32);
     draw_wordmark(x, S(32), S(30));
     int sy = S(120), step = S(60);
-    for (int i = 0; i < N_RAIL; i++) {
+    for (int r = 0; r < N_RAIL; r++) {
+        if (!rail_shown(r)) continue;
+        int i = rail_slot(r);
         float cx = (float)(x + S(12)), cy = (float)(sy + i * step + S(15));
-        if (i < N_RAIL - 1)
+        if (i < rail_n() - 1)
             aa_line(cx, cy + (float)S(14), cx, cy + (float)step - (float)S(14), (float)S(2),
                     C_RULE, 1.f);
         RECT b = { x + S(40), sy + i * step, g_side - S(16), sy + i * step + S(30) };
         if (i < cur) {
             stroke_circle(cx, cy, (float)S(11), (float)S(2), C_RULE, 1.f);
             glyph_check(cx, cy, (float)S(13), C_INK2, 1.f);
-            text_in(RAIL[i].label, g_f_body, C_INK2, b, DT_SINGLELINE | DT_VCENTER);
+            text_in(RAIL[r].label, g_f_body, C_INK2, b, DT_SINGLELINE | DT_VCENTER);
         } else if (i == cur) {
             fill_circle(cx, cy, (float)S(12), C_ACCENT, 1.f);
             fill_circle(cx, cy, (float)S(4), C_ON_ACCENT, 1.f);
-            text_in(RAIL[i].label, g_f_bodyb, C_INK, b, DT_SINGLELINE | DT_VCENTER);
+            text_in(RAIL[r].label, g_f_bodyb, C_INK, b, DT_SINGLELINE | DT_VCENTER);
         } else {
             stroke_circle(cx, cy, (float)S(11), (float)S(2), C_RULE, 1.f);
-            text_in(RAIL[i].label, g_f_body, C_INK2, b, DT_SINGLELINE | DT_VCENTER);
+            text_in(RAIL[r].label, g_f_body, C_INK2, b, DT_SINGLELINE | DT_VCENTER);
         }
     }
 }
@@ -3332,7 +3365,7 @@ static int page_ready(int x, int y, int w)
     wcscpy(nowork, L"Programs made for Windows don’t run in AurOS.");
     if (hw_ready_line(hwl, 420)) { wcscat(nowork, L" "); wcsncat(nowork, hwl, 420); }
     ROW(G_INFO, nowork);
-    ROW(G_LOOK, STYLES[g_sel_style].ready);
+    if (look_offered()) ROW(G_LOOK, STYLES[g_sel_style].ready);
 
     if (g_dl_state == 2) {
         wcscpy(buf, L"AurOS has already downloaded.");
@@ -3700,7 +3733,7 @@ static page_id back_target(void)
 {
     switch (g_page) {
     case PAGE_STYLE: return PAGE_WELCOME;
-    case PAGE_READY: return PAGE_STYLE;
+    case PAGE_READY: return look_offered() ? PAGE_STYLE : PAGE_WELCOME;
     default:         return g_page;
     }
 }
@@ -4240,7 +4273,7 @@ static void check_advance(void)
         /* Only from the page whose button asked for it. She may have gone
          * Back while the check ran; a clean answer then starts nothing. */
         if (g_page != PAGE_READY && g_page != PAGE_PROGRESS) {
-            g_check_next = PAGE_STYLE;
+            g_check_next = after_check();
             return;
         }
         /* Re-ran preflight and it is still clean: this is the only place
@@ -4329,17 +4362,17 @@ static void do_primary(void)
         return;
     }
     switch (g_page) {
-    case PAGE_WELCOME:  goto_page(PAGE_STYLE); g_want_focus_id = ID_PRIMARY; break;
+    case PAGE_WELCOME:  goto_page(after_check()); g_want_focus_id = ID_PRIMARY; break;
     case PAGE_BLOCKED:  if (sb_page()) {
                             if (!g_sb_helper) { g_sb_helper = 1; page_changed(); }
-                            else start_check(PAGE_STYLE);
+                            else start_check(after_check());
                         }
                         else if (any_cannot()) PostMessageW(g_hwnd, WM_CLOSE, 0, 0);
                         /* a fix that restarts Windows asks first, plainly: her
                          * work is lost if she has not saved it (C-01) */
                         else if (fixable_now() == 2) { g_confirm = 3; page_changed(); }
                         else if (fixable_now()) fix_start();
-                        else start_check(PAGE_STYLE);
+                        else start_check(after_check());
                         break;
     case PAGE_STYLE:    goto_page(PAGE_READY); g_want_focus_id = ID_PRIMARY; break;
     case PAGE_READY:    start_check(PAGE_PROGRESS); break;
@@ -4706,7 +4739,7 @@ static void acc_page_name(wchar_t *out, int n)
             L"%ls The computer restarts once. About %ls total. By pressing Install AurOS "
             L"you agree to the AurOS Terms; the button Read the Terms shows them. Press "
             L"Enter to install AurOS.",
-            STYLES[style_ok() ? g_sel_style : 0].ready, rng);
+            look_offered() ? STYLES[style_ok() ? g_sel_style : 0].ready : L"", rng);
         break;
     }
     case PAGE_PROGRESS:
@@ -5010,7 +5043,7 @@ static char g_selftest_dir[MAX_PATH];
  * presses that button again, with her look still chosen. */
 static void blocked_cleared(void)
 {
-    g_check_next = PAGE_STYLE;
+    g_check_next = after_check();
     check_advance();
 }
 
@@ -5823,7 +5856,7 @@ static int nav_test(const char *dir)
     nt_fake_report(0);
     g_check_next = PAGE_PROGRESS;
     blocked_cleared();
-    nt_check(g_page == PAGE_WELCOME && !g_install_running && g_check_next == PAGE_STYLE,
+    nt_check(g_page == PAGE_WELCOME && !g_install_running && g_check_next == after_check(),
              "a stop that clears by itself goes back to the first page, never into the install");
 
     if (g_nt) fprintf(g_nt, "\n3. preflight clean: one press per page, nothing typed\n");
@@ -5832,18 +5865,22 @@ static int nav_test(const char *dir)
     nt_check(primary_enabled() && !wcscmp(primary_label(), L"Next"),
              "the first page offers Next once the check is clean");
     on_key(VK_RETURN);
-    nt_check(g_page == PAGE_STYLE, "Enter presses Next: the look page");
-    nt_check(primary_enabled() && !wcscmp(primary_label(), L"Next"),
-             "a look is already chosen, so Next works straight away");
-    on_key(VK_SPACE);
+    nt_check(g_page == after_check(),
+             look_offered() ? "Enter presses Next: the look page"
+                            : "Enter presses Next: this profile has no look page, so Ready");
+    if (look_offered()) {
+        nt_check(primary_enabled() && !wcscmp(primary_label(), L"Next"),
+                 "a look is already chosen, so Next works straight away");
+        on_key(VK_SPACE);
+    }
     nt_check(g_page == PAGE_READY, "Space presses Next too: the Ready page");
     nt_check(primary_enabled() && !wcscmp(primary_label(), L"Install AurOS"),
              "Ready's one button is Install AurOS, with nothing to tick or type first");
     nt_check(nav_allowed(PAGE_PROGRESS), "the install is reachable from Ready as it stands");
-    g_page = PAGE_STYLE;                   /* she went Back while it checked */
+    g_page = look_offered() ? PAGE_STYLE : PAGE_WELCOME;   /* she went Back while it checked */
     g_check_next = PAGE_PROGRESS;
     check_advance();
-    nt_check(g_page == PAGE_STYLE && !g_install_running,
+    nt_check(g_page == (look_offered() ? PAGE_STYLE : PAGE_WELCOME) && !g_install_running,
              "a clean re-check after she went Back starts nothing");
     g_page = PAGE_READY;
     g_check_next = PAGE_PROGRESS;
@@ -5852,7 +5889,7 @@ static int nav_test(const char *dir)
     g_page = PAGE_WELCOME;
 
     if (g_nt) fprintf(g_nt, "\n3b. one press is one press: a double-click never skips Ready\n");
-    {
+    if (look_offered()) {                  /* the look page is what is double-clicked past */
         nt_fake_report(0);
         g_check_next = PAGE_STYLE;
         g_nt_auto = 0;
@@ -6046,9 +6083,16 @@ static int nav_test(const char *dir)
             char what[160];
             snprintf(what, sizeof what, "card %d (%s, %s) travels as shell=%s theme=%s",
                      i, STYLES[i].shell, STYLES[i].theme, c.shell_archetype, c.theme);
-            int one = g_sel_style == i && c.shell_archetype[0] && c.theme[0] &&
-                      !strcmp(c.shell_archetype, STYLES[i].shell) &&
-                      !strcmp(c.theme, STYLES[i].theme);
+            /* The profile's rule (recipe.c): where the image decides its own
+             * look nothing travels; otherwise her card, with the profile's
+             * own theme when it names one. */
+            const char *want_theme = ab_profile_theme()[0] ? ab_profile_theme() : STYLES[i].theme;
+            int one = g_sel_style == i &&
+                      (look_offered()
+                       ? c.shell_archetype[0] && c.theme[0] &&
+                         !strcmp(c.shell_archetype, STYLES[i].shell) &&
+                         !strcmp(c.theme, want_theme)
+                       : !c.shell_archetype[0] && !c.theme[0]);
             nt_check(one, what);
             ok &= one;
         }
@@ -6060,6 +6104,31 @@ static int nav_test(const char *dir)
         nt_check(g_sel_style == 0, "and stop at the first one");
         g_sel_style = STYLE_DEFAULT;
         (void)ok;
+    }
+
+    if (g_nt) fprintf(g_nt, "\n5b. the profile this installer was built for: %s\n", ab_recipe_image_profile());
+    {
+        ab_choice c;
+        char want[48];
+        nt_fake_report(0);
+        choice_image_source(&c);
+        nt_check(ab_recipe_status() != AB_RECIPE_INVALID && c.profile[0] &&
+                 !strcmp(c.profile, ab_recipe_image_profile()) &&
+                 ab_profile_image_name(c.profile, want, sizeof want) == 0 &&
+                 strstr(c.image_path, want),
+                 "the journal's profile, and the image it looks for, are the profile it was built for");
+        nt_check(rail_n() == N_RAIL - (look_offered() ? 0 : 1),
+                 "the steps are counted without a look step where there is no look page");
+        nt_check(nav_allowed(PAGE_STYLE) == (look_offered() != 0),
+                 "the look page exists only where the image honours the look");
+        g_page = PAGE_READY;
+        nt_check(back_target() == (look_offered() ? PAGE_STYLE : PAGE_WELCOME),
+                 "Back from Ready goes to the look page, or to the first page where there is none");
+        wchar_t nm[1400];
+        acc_page_name(nm, 1400);
+        nt_check(look_offered() ? wcsstr(nm, L"It will ") != NULL : wcsstr(nm, L"It will ") == NULL,
+                 "Ready describes a look only where the person chose one");
+        g_page = PAGE_WELCOME;
     }
     {
         detect_defaults();
@@ -6246,8 +6315,9 @@ static int nav_test(const char *dir)
     {
         nt_fake_report(0);
         g_page = PAGE_READY;   on_key(VK_ESCAPE);
-        nt_check(g_page == PAGE_STYLE, "Esc on Ready goes back to the looks");
-        on_key(VK_ESCAPE);
+        nt_check(g_page == (look_offered() ? PAGE_STYLE : PAGE_WELCOME),
+                 "Esc on Ready goes back to the looks (the first page where there is no look page)");
+        if (look_offered()) on_key(VK_ESCAPE);
         nt_check(g_page == PAGE_WELCOME, "Esc on the looks goes back to the first page");
         on_key(VK_ESCAPE);
         nt_check(g_page == PAGE_WELCOME, "Esc on the first page does nothing");
@@ -6616,7 +6686,7 @@ static int nav_test(const char *dir)
         fx_hw(FXH_BCM_ETH);
         const wchar_t *ln[2]; static wchar_t bf[2][330];
         int notes = hw_internet_notes(ln, 2, bf);
-        nt_check(g_report.n_block == 0 && pf_is_go(&g_report) && nav_allowed(PAGE_STYLE),
+        nt_check(g_report.n_block == 0 && pf_is_go(&g_report) && nav_allowed(after_check()),
                  "the same card with a cable socket does not stop her");
         nt_check(notes == 1 && wcsstr(ln[0], L"network cable will"),
                  "... it is one line under Good to know on the first page");
@@ -6799,7 +6869,7 @@ static int nav_test(const char *dir)
         g_page = PAGE_WELCOME;
         /* a page that moves on closes the pane (the check can finish behind it) */
         widget_activate(ID_LICENSES);
-        goto_page(PAGE_STYLE);
+        goto_page(after_check());
         nt_check(g_pane == 0, "a page that changes closes it");
         g_page = PAGE_WELCOME;
     }

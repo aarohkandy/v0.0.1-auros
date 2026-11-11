@@ -33,6 +33,24 @@ ok()  { checked=$((checked+1)); printf '    %-60s %s\n' "$1" "ok"; }
 bad() { checked=$((checked+1)); fail=$((fail+1)); printf '    %-60s %s\n' "$1" "FAIL"
         shift; for m in "$@"; do printf '      %s\n' "$m"; done; }
 
+# WHICH PROFILE. desktop unless NOSTICK_PROFILE=baked, which installs the
+# profile out/aurbridge-sim was BUILT for (the way the wizard does: the journal,
+# the manifest and the image's file name all follow it, and what she picked on
+# the look page goes through that profile's look rule). It is how a
+# non-desktop installer is proved end to end: build/aurbridge with
+# AUROS_IMAGE_PROFILE=office, then NOSTICK_PROFILE=baked sh tools/nosticktest.sh.
+PROF=desktop; SIMPROF=desktop
+if [ "${NOSTICK_PROFILE:-}" = baked ]; then
+    PROF=$(out/aurbridge-sim profile | sed -n 's/^profile=\([^ ]*\) .*/\1/p')
+    [ -n "$PROF" ] || { echo "out/aurbridge-sim has no valid profile baked in"; exit 2; }
+    SIMPROF=@baked
+    PINFO=$(out/aurbridge-sim profile)
+    case "$PINFO" in
+      *" look_offered=0 "*) LOOK_EXPECT=none ;;
+      *) LOOK_EXPECT=$(printf '%s' "$PINFO" | sed -n 's/.* theme=\([^ ]*\) .*/\1/p'); : "${LOOK_EXPECT:=moss}" ;;
+    esac
+fi
+LOOK_EXPECT="${LOOK_EXPECT:-moss}"
 . tools/machine.sh
 mach_need
 [ -f out/auros-staging.img ] || { echo "run ./build/staging first"; exit 2; }
@@ -67,14 +85,14 @@ mkdir -p "$SIM/esp" "$TMP/win/AurOS"
 : > "$SIM/efivars.txt"
 printf '0\t%s\t%s\t512\tAUROSTEST\tQEMU\t0\n' "$DISK" "$(stat -c%s "$DISK")" \
     > "$SIM/disks.txt"
-cp "$AIMG" "$TMP/win/AurOS/auros-desktop.img"
+cp "$AIMG" "$TMP/win/AurOS/auros-$PROF.img"
 # And what she chose on the personalize page, the way the wizard hands
 # it over: a Windows keyboard id and time-zone key, which first boot
 # maps with Ferry's tables (tools/choicestest.sh proves that half).
 export AURBRIDGE_LANGUAGE=es_ES.UTF-8 AURBRIDGE_KEYBOARD=klid:0000040A \
        AURBRIDGE_TIMEZONE="windows:Romance Standard Time" \
        AURBRIDGE_THEME=moss AURBRIDGE_SHELL=taskbar
-if out/aurbridge-sim "$SIM" desktop none "$TMP/win/AurOS/auros-desktop.img" \
+if out/aurbridge-sim "$SIM" "$SIMPROF" none "$TMP/win/AurOS/auros-$PROF.img" \
        out/auros-staging-vmlinuz out/auros-staging.img \
        > "$TMP/sim.out" 2> "$TMP/sim.err" && grep -q 'verdict=armed' "$TMP/sim.out"; then
     ok "AurBridge (no stick) arms the machine"
@@ -82,14 +100,19 @@ else
     bad "AurBridge (no stick) arms the machine" "$(tail -3 "$TMP/sim.err")"
     exit 1
 fi
-[ -f "$TMP/win/AurOS/auros-desktop.img.manifest" ] \
+[ -f "$TMP/win/AurOS/auros-$PROF.img.manifest" ] \
     && ok "...and wrote the image's manifest beside it" \
     || bad "...and wrote the image's manifest beside it"
 CH="$SIM/esp/EFI/AurOS/choices.conf"
+if [ "$LOOK_EXPECT" = none ]; then   # a locked profile: the image decides its look
+    look_ok() { ! grep -q '^theme=\|^shell=' "$CH"; }
+else
+    look_ok() { grep -qx "theme=$LOOK_EXPECT" "$CH" && grep -qx 'shell=taskbar' "$CH"; }
+fi
 if grep -qx 'language=es_ES.UTF-8' "$CH" 2>/dev/null &&
    grep -qx 'keyboard=klid:0000040A' "$CH" &&
    grep -qx 'timezone=windows:Romance Standard Time' "$CH" &&
-   grep -qx 'theme=moss' "$CH" && grep -qx 'shell=taskbar' "$CH"; then
+   look_ok; then
     ok "...and what she chose, on the EFI partition for first boot"
 else
     bad "...and what she chose, on the EFI partition for first boot" \
@@ -126,10 +149,10 @@ put_in_windows() { # extra-step: "" | corrupt | missing
     rm -rf "$TMP/m/AurOS"
     if [ "$2" != missing ]; then
         mkdir -p "$TMP/m/AurOS"
-        cp "$TMP/win/AurOS/auros-desktop.img" "$TMP/win/AurOS/auros-desktop.img.manifest" \
+        cp "$TMP/win/AurOS/auros-$PROF.img" "$TMP/win/AurOS/auros-$PROF.img.manifest" \
            "$TMP/m/AurOS/"
         if [ "$2" = corrupt ] || [ "$2" = swapped ]; then
-            python3 - "$TMP/m/AurOS/auros-desktop.img" "$ROFF" "$RLEN" <<'EOPY'
+            python3 - "$TMP/m/AurOS/auros-$PROF.img" "$ROFF" "$RLEN" <<'EOPY'
 import sys
 f = open(sys.argv[1], 'r+b'); f.seek(int(sys.argv[2]) + int(sys.argv[3]) // 2)
 b = f.read(1); f.seek(-1, 1); f.write(bytes([b[0] ^ 0xFF])); f.close()
@@ -141,7 +164,7 @@ EOPY
             # manifest so that the two agree. Everything the file says about
             # itself is consistent; only the journal, on the EFI partition,
             # still remembers what the installer saw.
-            python3 - "$TMP/m/AurOS/auros-desktop.img" "$TMP/m/AurOS/auros-desktop.img.manifest" "$ROFF" "$RLEN" <<'EOPY'
+            python3 - "$TMP/m/AurOS/auros-$PROF.img" "$TMP/m/AurOS/auros-$PROF.img.manifest" "$ROFF" "$RLEN" <<'EOPY'
 import sys, hashlib, struct
 img, man, off, ln = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
 h = hashlib.sha256()
@@ -169,7 +192,7 @@ put_in_windows "$TMP/missing.img" missing "$TMP/y.before"
 cp --sparse=always "$DISK" "$TMP/swapped.img"
 put_in_windows "$TMP/swapped.img" swapped "$TMP/z.before"
 WINFILES=$(wc -l < "$TMP/win.before")
-grep -q 'AurOS/auros-desktop.img$' "$TMP/win.before" \
+grep -q "AurOS/auros-$PROF.img\$" "$TMP/win.before" \
     && ok "the image is inside Windows ($WINFILES files there now)" \
     || bad "the image is inside Windows"
 
@@ -359,7 +382,7 @@ if [ -f "$MSCODE" ] && [ -f "$MSVARS" ]; then
         > "$SIM2/esp/EFI/ubuntu/grub.cfg"
     ubuntu_sum=$(sha256sum < "$SIM2/esp/EFI/ubuntu/grub.cfg")
     AURBRIDGE_STAGING_KARGS="console=ttyS0,115200 aurstage.min_gb=1" \
-        out/aurbridge-sim "$SIM2" desktop none "$TMP/win/AurOS/auros-desktop.img" \
+        out/aurbridge-sim "$SIM2" "$SIMPROF" none "$TMP/win/AurOS/auros-$PROF.img" \
         out/auros-staging-vmlinuz out/auros-staging.img \
         > "$TMP/sim2.out" 2> "$TMP/sim2.err"
     grep -q 'verdict=armed' "$TMP/sim2.out" \
@@ -505,7 +528,7 @@ e.plant(sys.argv[1], 'BootNext', '8be4df61-93ca-11d2-aa0d-00e098032b8c', b'\x09\
         python3 tools/efivarstore.py "$2" get db  "$SIM3/db.bin"
         python3 tools/efivarstore.py "$2" get dbx "$SIM3/dbx.bin"
         before=$(sha256sum < "$DISK")
-        out/aurbridge-sim "$SIM3" desktop none "$TMP/win/AurOS/auros-desktop.img" \
+        out/aurbridge-sim "$SIM3" "$SIMPROF" none "$TMP/win/AurOS/auros-$PROF.img" \
             out/auros-staging-vmlinuz out/auros-staging.img \
             > "$TMP/sim3.out" 2> "$TMP/sim3.err"
         grep -q 'verdict=refused' "$TMP/sim3.out" \

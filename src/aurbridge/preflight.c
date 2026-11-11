@@ -1030,7 +1030,7 @@ static int space_enough(uint64_t giveable, uint64_t image_bytes, uint64_t have)
  * check_volumes on the spot, which dropped the check for every drive.) */
 static uint64_t image_on_disk(const char *drive, const char *profile)
 {
-    char path[MAX_PATH + 48], image_name[40];
+    char path[MAX_PATH + 48], image_name[48];
     uint64_t have = 0;
     if (ab_profile_image_name(profile, image_name, sizeof image_name) != 0)
         return 0;
@@ -2012,7 +2012,7 @@ static void check_wifi(pf_report *r)
 /* ── public API ──────────────────────────────────────────────────── */
 void pf_run(pf_report *r)
 {
-    char image_name[40];
+    char image_name[48];
     memset(r, 0, sizeof *r);
     r->secure_boot     = -1;
     r->system_disk     = -1;
@@ -2079,7 +2079,7 @@ static void fill_bs(BYTE *sec, const char *oem, const char *fat54, const char *f
 int pf_selftest(void)
 {
     BYTE sec[512];
-    char image_name[40];
+    char image_name[48];
     g_fail = 0;
     printf("\n  preflight self-test\n\n");
 
@@ -2097,7 +2097,14 @@ int pf_selftest(void)
       !strcmp(image_name, "auros-office.img") &&
       ab_profile_image_name("school-kiosk", image_name, sizeof image_name) == 0 &&
       !strcmp(image_name, "auros-school-kiosk.img"));
-    t("profile image: paths and unknown profiles are refused",
+    t("profile image: a new profile needs no code, only a clean name",
+      ab_profile_image_name("mahjong-lab", image_name, sizeof image_name) == 0 &&
+      !strcmp(image_name, "auros-mahjong-lab.img") &&
+      ab_profile_image_name("school2", image_name, sizeof image_name) == 0 &&
+      !strcmp(image_name, "auros-school2.img") &&
+      ab_profile_image_name("abcdefghijklmnopqrstuvwxyz012345", image_name,
+                            sizeof image_name) == 0);
+    t("profile image: paths and malformed names are refused",
       ab_profile_image_name("../desktop", image_name, sizeof image_name) != 0 &&
       image_name[0] == 0 &&
       ab_profile_image_name("desktop\\evil", image_name, sizeof image_name) != 0 &&
@@ -2105,6 +2112,14 @@ int pf_selftest(void)
       ab_profile_image_name("Desktop", image_name, sizeof image_name) != 0 &&
       image_name[0] == 0 &&
       ab_profile_image_name("", image_name, sizeof image_name) != 0 &&
+      image_name[0] == 0 &&
+      ab_profile_image_name("-desktop", image_name, sizeof image_name) != 0 &&
+      ab_profile_image_name("desktop-", image_name, sizeof image_name) != 0 &&
+      ab_profile_image_name("a b", image_name, sizeof image_name) != 0 &&
+      ab_profile_image_name("a.b", image_name, sizeof image_name) != 0 &&
+      ab_profile_image_name("c:desktop", image_name, sizeof image_name) != 0 &&
+      ab_profile_image_name("abcdefghijklmnopqrstuvwxyz0123456", image_name,
+                            sizeof image_name) != 0 &&
       image_name[0] == 0);
     t("profile image: a short output buffer fails closed",
       ab_profile_image_name("desktop", image_name, 8) != 0 && image_name[0] == 0);

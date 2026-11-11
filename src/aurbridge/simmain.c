@@ -20,6 +20,8 @@
 #include "plat.h"
 #include "inflate.h"
 #include "sbdb.h"
+#include "recipe.h"
+#include "profile_image.h"
 #include "aurbridge-baked.h"
 
 static void say(const char *line, void *ud)
@@ -99,6 +101,16 @@ int main(int argc, char **argv)
 {
     if (argc >= 2 && !strcmp(argv[1], "fetch")) return one_fetch(argc, argv);
     if (argc >= 2 && !strcmp(argv[1], "getimage")) return one_getimage(argc, argv);
+    /* `profile`: what this installer was built to install, as the wizard
+     * would put it in the journal (tools/profileinstalltest.sh). */
+    if (argc == 2 && !strcmp(argv[1], "profile")) {
+        char image[64] = "";
+        ab_profile_image_name(ab_recipe_image_profile(), image, sizeof image);
+        printf("profile=%s image=%s look_offered=%d look=%s theme=%s status=%d\n",
+               ab_recipe_image_profile(), image, ab_profile_look_offered(),
+               ab_profile_look(), ab_profile_theme(), ab_recipe_status());
+        return ab_recipe_status() == AB_RECIPE_INVALID ? 1 : 0;
+    }
     if (argc >= 2 && !strcmp(argv[1], "gzselftest")) {
         int bad = gz_selftest();
         printf("gzselftest %s\n", bad ? "FAILED" : "ok");
@@ -134,7 +146,15 @@ int main(int argc, char **argv)
 
     ab_choice c;
     memset(&c, 0, sizeof c);
-    snprintf(c.profile, sizeof c.profile, "%s", argv[2]);
+    /* "@baked" is what the wizard does: the profile this installer was built
+     * for, and the look rule that goes with it. Anything else is a test
+     * naming a profile by hand. */
+    int baked = !strcmp(argv[2], "@baked");
+    if (baked && ab_recipe_status() == AB_RECIPE_INVALID) {
+        fprintf(stderr, "aurbridge: this build's profile is invalid\n");
+        return 2;
+    }
+    snprintf(c.profile, sizeof c.profile, "%s", baked ? ab_recipe_image_profile() : argv[2]);
     /* "none" is the no-stick mode: the image stays where it is (it has
      * to be on the simulated Windows drive for the install to find it,
      * which the test arranges), and its manifest is written beside it. */
@@ -166,6 +186,9 @@ int main(int argc, char **argv)
             if (getenv(E[i].env))
                 snprintf(E[i].dst, E[i].n, "%s", getenv(E[i].env));
     }
+    if (baked)
+        ab_profile_apply_look(c.shell_archetype, sizeof c.shell_archetype,
+                              c.theme, sizeof c.theme);
     /* The simulated person agrees. On a real machine nothing but a
      * person sets this, and phase 1 refuses without it -- which
      * ab_selftest checks and this does not, because a test that has to

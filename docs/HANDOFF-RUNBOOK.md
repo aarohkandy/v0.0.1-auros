@@ -85,6 +85,35 @@ it is still how to reproduce a step locally.
 anything writable, only `src/aurstage/nvram.c` may write EFI variables.
 It refuses the build otherwise.
 
+### An installer for any profile (by hand)
+
+One `AurOS-Setup.exe` installs exactly one OS, fixed when it is built. To
+make one for a profile (`profiles/<name>.profile`, usually
+`inherit="desktop"` plus different programs, look, theme or kiosk policy):
+
+```sh
+sudo build/make-os office --base-url https://github.com/OWNER/REPO/releases/download/TAG/
+```
+
+That is profile, image (`build/all`), pieces, staging and
+`build/aurbridge` in one go, and it leaves in `out/os/<profile>/` exactly
+what a publishing step would upload: `AurOS-Setup-<profile>.exe`,
+`auros-<profile>.img.gz.NNN`, `pieces-<profile>.txt`,
+`image-<profile>.sha256`, `image-<profile>.bytes`, `SHA256SUMS-<profile>`
+(the profile is in every name, so two OSes can share one release). The
+pieces' address is baked into the installer, so give the final one.
+A name that is not `[a-z0-9-]`, or has no profile file, stops it before the
+image build; it never becomes desktop. Adding a profile edits no C, no list
+and no workflow. What the look page does for a profile is decided by
+`tools/customize/installer_profile.py`: a profile that inherits desktop
+starts the page on its own look and theme; a kiosk, or a profile that sets
+`allow_settings_change="no"` or `allow_theme_change="no"`, gets no look page
+and writes no look, so the image's own stays. With no profile named,
+`build/aurbridge` is the desktop installer exactly as before.
+Proof without Windows: `sh tools/profileinstalltest.sh` (any profile, no
+root), and `NOSTICK_PROFILE=baked sh tools/nosticktest.sh` after a
+`build/aurbridge` for that profile.
+
 ### The installer as published (image pieces baked in)
 
 ```sh

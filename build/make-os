@@ -1,0 +1,207 @@
+#!/bin/bash
+# ═══════════════════════════════════════════════════════════════════
+#  make-os — one profile, all the way to its installer
+#
+#    sudo build/make-os PROFILE --base-url URL [options]
+#
+#  profile -> image -> pieces -> staging -> AurOS-Setup-PROFILE.exe
+#
+#  "The owner makes each OS by hand": a profile is a file,
+#  profiles/<name>.profile (usually `inherit="desktop"` plus different
+#  programs, look, theme, language or kiosk policy). This turns it into
+#  the thing a person double-clicks. One .exe installs exactly one OS;
+#  its profile is baked in here and never asked of her
+#  (tools/customize/installer_profile.py, build/aurbridge).
+#
+#  URL is where the pieces will be published, e.g. a GitHub prerelease:
+#    https://github.com/OWNER/REPO/releases/download/TAG/
+#  It is baked into the installer, so it must be right now. Nothing is
+#  uploaded: the outputs are exactly what a publishing step would upload.
+#
+#  OUTPUTS, in out/os/PROFILE/ (file names carry the profile, so two OSes
+#  live in one release without colliding):
+#    AurOS-Setup-PROFILE.exe          the installer (the stub she downloads)
+#    auros-PROFILE.img.gz.000 ...     the image, gzip, in pieces
+#    pieces-PROFILE.txt               the list baked into the .exe
+#    image-PROFILE.sha256 / .bytes    what the pieces unpack to
+#    SHA256SUMS-PROFILE               every file above
+#  The raw image stays at out/auros-PROFILE.img (a later boot test reads it).
+#
+#  OPTIONS
+#    --base-url URL     required (http:// or https://; a slash is added)
+#    --piece-bytes N    piece size, default 94371840 (90 MiB, as release.yml)
+#    --no-build         use the image already in out/ (and its work tree)
+#    --no-verify        skip unpacking the pieces again with the installer's
+#                       own code (needs the image's size in free disk)
+#    --keep-work        keep work/forge/PROFILE afterwards (default: give it
+#                       back; it is ~3 GB and rebuildable)
+#  ENVIRONMENT, as the CI build: AUROS_RELEASE (default 1: refuses an
+#  installer without staging, signed shim or image address), AUROS_REPO
+#  (owner/name, for the website it names), AUROS_VERSION, and for the image
+#  build ALLOW_BROWSER_FALLBACK / REQUIRE_FLATHUB_CATALOGUE.
+#
+#  An unknown or malformed PROFILE stops here, before the hour-long image
+#  build: it is never turned into desktop.
+# ═══════════════════════════════════════════════════════════════════
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OUT="$ROOT/out"
+
+C_OK=$'\033[38;2;125;211;192m'; C_ERR=$'\033[38;2;242;120;141m'
+C_DIM=$'\033[38;2;110;120;134m'; C_RST=$'\033[0m'
+step() { printf '\n%s▸%s %s\n' "$C_OK" "$C_RST" "$*"; }
+note() { printf '%s   %s%s\n' "$C_DIM" "$*" "$C_RST"; }
+die()  { printf '%s::%s %s\n' "$C_ERR" "$C_RST" "$*" >&2; exit 1; }
+
+export AUROS_RELEASE="${AUROS_RELEASE:-1}"
+PROFILE="" BASE_URL="" PIECE_BYTES=94371840 BUILD=1 VERIFY=1 KEEP_WORK=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --base-url)    BASE_URL="${2:-}"; shift ;;
+        --base-url=*)  BASE_URL="${1#--base-url=}" ;;
+        --piece-bytes) PIECE_BYTES="${2:-}"; shift ;;
+        --no-build)    BUILD=0 ;;
+        --no-verify)   VERIFY=0 ;;
+        --keep-work)   KEEP_WORK=1 ;;
+        -h|--help)     sed -n '2,45p' "$0"; exit 0 ;;
+        -*)            die "unknown option: $1" ;;
+        *)             [ -z "$PROFILE" ] || die "one profile at a time (got '$PROFILE' and '$1')"
+                       PROFILE="$1" ;;
+    esac
+    shift
+done
+[ -n "$PROFILE" ]  || die "usage: sudo build/make-os PROFILE --base-url URL   (profiles: $(cd "$ROOT/profiles" && ls *.profile | sed 's/\.profile$//' | tr '\n' ' '))"
+[ -n "$BASE_URL" ] || die "--base-url is required: the pieces' address is baked into the installer"
+case "$BASE_URL" in http://*|https://*) ;; *) die "--base-url must start with http:// or https://" ;; esac
+case "$BASE_URL" in */) ;; *) BASE_URL="$BASE_URL/" ;; esac
+# The piece list becomes C source (build/aurbridge allows only these).
+if LC_ALL=C printf '%s' "$BASE_URL" | grep -q '[^A-Za-z0-9._:/+-]'; then
+    die "--base-url has characters that do not belong in an address baked into C"
+fi
+case "$PIECE_BYTES" in ''|*[!0-9]*) die "--piece-bytes is not a number" ;; esac
+
+# ── the profile, checked before anything is built ──────────────────
+TMPH=$(mktemp); trap 'rm -f "$TMPH"' EXIT
+python3 "$ROOT/tools/customize/installer_profile.py" "$PROFILE" --output "$TMPH" \
+    || die "'$PROFILE' cannot be made into an installer (above)"
+LOOK_OFFERED=$(sed -n 's/^#define AUROS_PROFILE_LOOK_OFFERED //p' "$TMPH")
+note "profile $PROFILE: the look page is $([ "$LOOK_OFFERED" = 1 ] && echo offered || echo NOT offered: the image decides its own look)"
+
+[ "$(id -u)" = 0 ] || die "forge needs root to build a rootfs. Run this with sudo."
+for t in pigz split sha256sum python3 strings; do
+    command -v "$t" >/dev/null 2>&1 || die "$t is not installed, and $0 needs it"
+done
+
+IMG="$OUT/auros-$PROFILE.img"
+DEST="$OUT/os/$PROFILE"
+TAGLINE="AurOS $PROFILE"
+
+# ── 1. profile -> image ────────────────────────────────────────────
+if [ "$BUILD" = 1 ]; then
+    step "the image: build/all $PROFILE"
+    force=()
+    [ -d "$ROOT/work/forge/$PROFILE/rootfs" ] || force=(--force)
+    "$ROOT/build/all" "$PROFILE" --keep=raw --keep-work="$PROFILE" "${force[@]}"
+fi
+[ -f "$IMG" ] || die "no image at $IMG (build/all did not leave one)"
+MANIFEST="$OUT/manifests/$PROFILE.json"
+[ -f "$MANIFEST" ] || die "no $MANIFEST: build/all records every image it makes"
+grep -q "\"profile\": \"$PROFILE\"" "$MANIFEST" || die "$MANIFEST is not for profile $PROFILE"
+
+sha=$(sha256sum "$IMG" | cut -d' ' -f1)
+bytes=$(stat -c %s "$IMG")
+# The digest build/all recorded, or something touched the image between.
+grep -q "\"image_sha256\": \"$sha\"" "$MANIFEST" \
+    || die "the image does not hash to what build/all recorded for $PROFILE"
+note "image $bytes bytes, sha256 $sha"
+
+# ── 2. staging ─────────────────────────────────────────────────────
+if [ "$BUILD" = 1 ] || [ ! -f "$OUT/auros-staging.img" ]; then
+    step "the staging environment: build/staging $PROFILE"
+    "$ROOT/build/staging" "$PROFILE"
+fi
+
+# ── 3. image -> pieces ─────────────────────────────────────────────
+step "the image, in gzip pieces, with the list the installer bakes in"
+rm -rf "$DEST"; mkdir -p "$DEST"
+GZ="$DEST/auros-$PROFILE.img.gz"
+pigz -9 -p "$(nproc)" -c "$IMG" > "$GZ"
+gzsha=$(sha256sum "$GZ" | cut -d' ' -f1)
+( cd "$DEST" && split -b "$PIECE_BYTES" -d -a 3 "auros-$PROFILE.img.gz" "auros-$PROFILE.img.gz." )
+rm -f "$GZ"
+{
+    echo "# $TAGLINE, $(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null || echo unknown), built by build/make-os"
+    echo "base $BASE_URL"
+    for p in "$DEST"/auros-"$PROFILE".img.gz.*; do
+        echo "piece $(basename "$p") $(stat -c %s "$p") $(sha256sum "$p" | cut -d' ' -f1)"
+    done
+} > "$DEST/pieces-$PROFILE.txt"
+echo "$sha"   > "$DEST/image-$PROFILE.sha256"
+echo "$bytes" > "$DEST/image-$PROFILE.bytes"
+n=$(grep -c '^piece ' "$DEST/pieces-$PROFILE.txt")
+note "gzip sha256 $gzsha in $n pieces of up to $PIECE_BYTES bytes"
+
+# ── 4. staging + pieces -> AurOS-Setup-PROFILE.exe ─────────────────
+step "build/aurbridge, for $PROFILE, pointed at $BASE_URL"
+export AUROS_IMAGE_PROFILE="$PROFILE"
+export AUROS_IMAGE_PIECES="$DEST/pieces-$PROFILE.txt"
+export AUROS_IMAGE_SHA256="$sha"
+export AUROS_IMAGE_BYTES="$bytes"
+sh "$ROOT/build/aurbridge"
+cp "$OUT/aurbridge-setup.exe" "$DEST/AurOS-Setup-$PROFILE.exe"
+
+# ── 5. what the installer carries, asked of the file itself ────────
+step "what the installer carries"
+python3 "$ROOT/tools/pe_payload.py" list "$DEST/AurOS-Setup-$PROFILE.exe" > "$DEST/.res.txt"
+for id in 1 2 3 4 5; do
+    grep -q "^$id " "$DEST/.res.txt" || die "resource $id is missing from the installer"
+done
+rm -f "$DEST/.res.txt"
+strings -a "$DEST/AurOS-Setup-$PROFILE.exe" > "$DEST/.strings.txt"
+grep -qF "$BASE_URL" "$DEST/.strings.txt" || die "the pieces' address is not baked into the installer"
+# The profile as a whole string: the journal's profile and the image's name.
+grep -qx "$PROFILE" "$DEST/.strings.txt" || die "the profile name is not baked into the installer as its own string"
+if [ "$AUROS_RELEASE" = 1 ]; then
+    grep -q 'Microsoft Corporation UEFI CA' "$DEST/.strings.txt" \
+        || die "the installer does not know which Microsoft key the shim is signed with"
+fi
+rm -f "$DEST/.strings.txt"
+# (its own throwaway build of a broken manifest must not be a release build)
+AUROS_RELEASE=0 sh "$ROOT/tools/manifesttest.sh" "$DEST/AurOS-Setup-$PROFILE.exe" || die "the installer's manifest is one Windows would refuse"
+"$OUT/aurbridge-sim" gzselftest
+"$OUT/aurbridge-sim" sbselftest
+note "the .exe is for profile '$PROFILE', carries staging + shim, and names $BASE_URL"
+
+# ── 6. the pieces unpack to the image, through the installer's own code ──
+if [ "$VERIFY" = 1 ]; then
+    step "the pieces, fetched and unpacked by the installer's own code"
+    V=$(mktemp -d "$OUT/.verify.XXXXXX")
+    # The list the exe carries, but pointing at a server on this machine.
+    PORT=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
+    sed "s|^base .*|base http://127.0.0.1:$PORT/|" "$DEST/pieces-$PROFILE.txt" > "$V/pieces.txt"
+    ( cd "$DEST" && exec python3 -m http.server "$PORT" --bind 127.0.0.1 >/dev/null 2>&1 ) &
+    SRV=$!
+    trap 'kill $SRV 2>/dev/null; rm -rf "$V"; rm -f "$TMPH"' EXIT
+    sleep 1
+    "$OUT/aurbridge-sim" getimage "$V/pieces.txt" "$V/unpacked.img" "$sha" "$bytes" \
+        || die "the installer's own code cannot fetch these pieces back into the image"
+    [ "$(sha256sum "$V/unpacked.img" | cut -d' ' -f1)" = "$sha" ] \
+        || die "the pieces do not unpack to the image"
+    note "fetched over HTTP, checked piece by piece, unpacked, and hashed back to $sha"
+    kill $SRV 2>/dev/null || true
+    rm -rf "$V"
+fi
+
+( cd "$DEST" && sha256sum "AurOS-Setup-$PROFILE.exe" "pieces-$PROFILE.txt" \
+      "image-$PROFILE.sha256" "image-$PROFILE.bytes" auros-"$PROFILE".img.gz.* > "SHA256SUMS-$PROFILE" )
+
+# ── 7. give the work tree back ─────────────────────────────────────
+if [ "$KEEP_WORK" = 0 ] && [ -d "$ROOT/work/forge/$PROFILE" ]; then
+    "$ROOT/build/forge" clean "$PROFILE" >/dev/null 2>&1 \
+        && note "gave back work/forge/$PROFILE" \
+        || note "could not clean work/forge/$PROFILE; run: build/forge clean $PROFILE"
+fi
+
+printf '\n%s::%s %s is ready in %s\n' "$C_OK" "$C_RST" "$PROFILE" "$DEST"
+ls -l "$DEST" | sed 's/^/   /'

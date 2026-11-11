@@ -232,7 +232,7 @@ if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
     # reaching further (tools/repo.sh, src/aurstage), and a copy missing
     # one fails these checks for that reason instead of the one asked.
     mkdir -p "$TMP/tree"
-    cp -r build src tools hw "$TMP/tree/"
+    cp -r build src tools hw profiles themes shells "$TMP/tree/"
     # The licences and the Terms travel inside the .exe (LEGAL, 9693e80):
     # build/aurbridge reads docs/legal/notices, so the copy needs it
     # (RC3 run 40038558072: both build checks died on "NOTICES.txt is missing").

@@ -149,6 +149,22 @@ fi
 # is no list -- so a list from yesterday's build cannot ride along in
 # today's. The characters are checked first: this text becomes C source.
 BAKED="$OUT/aurbridge-baked.h"
+# ── which profile this installer installs ──────────────────────────
+# ONE .exe = ONE OS, fixed here and never asked of the person. The name is
+# AUROS_IMAGE_PROFILE (desktop when unset, which is the public installer
+# exactly as it always was); tools/customize/installer_profile.py reads
+# profiles/<name>.profile and writes the header the wizard bakes in:
+# the profile's name (the journal's profile and the image's file name) and
+# what the look page does for it. The header is removed first and written on
+# EVERY build, and a name it cannot validate stops the build -- an unknown
+# profile is an error, never desktop.
+PROFILE_HEADER="$OUT/aurbridge-profile.h"
+rm -f "$PROFILE_HEADER"
+INSTALLER_PROFILE="${AUROS_IMAGE_PROFILE:-desktop}"
+python3 "$ROOT/tools/customize/installer_profile.py" "$INSTALLER_PROFILE" \
+    --output "$PROFILE_HEADER" \
+    || die "the profile '$INSTALLER_PROFILE' cannot be built into an installer (above)"
+note "this installer installs the '$INSTALLER_PROFILE' profile: auros-$INSTALLER_PROFILE.img"
 # A recipe header is generated only from an explicit recipe plus the trusted
 # profile metadata and image pins selected by the caller. Remove it first so
 # a plain build can never inherit yesterday's customization.
@@ -172,6 +188,12 @@ fi
             die "the piece list has characters in it that do not belong in an
      address, a file name or a hash; refusing to bake it into C"
         fi
+        # The pieces must be this profile's: a list of another profile's
+        # pieces would bake the right hash for the wrong name, or the reverse.
+        BADP=$(grep '^piece ' "$AUROS_IMAGE_PIECES" | awk '{print $2}' |
+               grep -v -E "^auros-$INSTALLER_PROFILE\\.img\\.gz\\.[0-9]{3}$" || true)
+        [ -z "$BADP" ] || die "the piece list names files that are not auros-$INSTALLER_PROFILE.img.gz.NNN:
+     $(printf '%s' "$BADP" | head -3 | tr '\n' ' ')"
         [ -n "${AUROS_IMAGE_SHA256:-}" ] && [ -n "${AUROS_IMAGE_BYTES:-}" ] \
             || die "AUROS_IMAGE_PIECES is set without AUROS_IMAGE_SHA256 and
      AUROS_IMAGE_BYTES. The pieces are checked one by one; what they unpack
@@ -454,7 +476,7 @@ step "aurbridge-sim (not shipped)"
 HOSTCC="${HOSTCC:-cc}"
 if command -v "$HOSTCC" >/dev/null 2>&1; then
     SIMLIB=""
-    for f in "$SRC"/format.c "$SRC"/phases.c "$SRC"/bootargs.c "$SRC"/inflate.c "$SRC"/sbdb.c "$SRC"/recipe.c; do SIMLIB="$SIMLIB $f"; done
+    for f in "$SRC"/format.c "$SRC"/phases.c "$SRC"/bootargs.c "$SRC"/inflate.c "$SRC"/sbdb.c "$SRC"/recipe.c "$SRC"/profile_image.c; do SIMLIB="$SIMLIB $f"; done
     SIMLIB="$SIMLIB $STAGE_SHARED"
     # shellcheck disable=SC2086
     $HOSTCC -O2 $WARN -I "$OUT" $STAGE_INC -o "$OUT/aurbridge-sim" $SIMLIB $SIMONLY \
