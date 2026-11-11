@@ -104,7 +104,13 @@ jobs:
         run: |
           # The runner's Azure kernel ships exFAT only in the -extra modules
           # package (run 40046027441: "Module exfat not found").
-          sh tools/apt.sh "linux-modules-extra-$(uname -r)"
+          # Since the runner's 7.0 kernel there is no -extra package: the
+          # drivers are in linux-modules itself (run 43110762649: "Unable to
+          # locate package linux-modules-extra-7.0.0-1017-azure"). Ask for it
+          # only where it exists; the modprobe below is still the check.
+          if ! sudo modprobe -n exfat 2>/dev/null; then
+            sh tools/apt.sh "linux-modules-extra-$(uname -r)"
+          fi
           sudo modprobe loop || true
           sudo modprobe exfat
           sudo modprobe vfat || true
