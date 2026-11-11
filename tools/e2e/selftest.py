@@ -1168,7 +1168,10 @@ def test_profile_journey():
     except ImportError:
         return
     import profileplan
-    check(e2e.PROFILE == "", "profile: with no E2E_PROFILE the journey is the desktop release's (PROFILE is empty)")
+    # In a profile's own run (make-os.yml) E2E_PROFILE is set for the whole job, this
+    # step included (make-os run 43112484099): the default is what an unset one gives.
+    check(e2e.PROFILE == os.environ.get("E2E_PROFILE", ""),
+          "profile: with no E2E_PROFILE the journey is the desktop release's (PROFILE is empty)")
 
     def plan(name):
         return profileplan.load(name)
