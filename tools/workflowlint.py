@@ -44,6 +44,12 @@
 12. The installer-signing token is never in workflow or job env. Only the
     configuration check and signing actions need it; unrelated actions must
     not inherit signing authority.
+13. make-os.yml (a custom OS for one person, docs/MAKE-AN-OS.md) can never touch
+    the public release: no --latest, make_latest, --prerelease=false,
+    releases/latest, `gh release edit` or call of release.yml; every
+    `gh release create` says --prerelease; only the jobs that publish
+    (publish, and windows, which calls e2e.yml) have contents: write; and no
+    script has ${{ }} in it (the profile is text a person typed: env only).
 """
 import glob, os, re, sys
 
@@ -107,10 +113,31 @@ def lint(path, text):
             if run and re.search(r"\bapt-get\b", run) and "tools/apt.sh" not in run \
                     and not re.search(r"\btimeout\b[^\n]*apt-get", run):
                 out.append("%s: job %s calls apt-get without tools/apt.sh or timeout" % (path, name))
+    if os.path.basename(path) == "make-os.yml":
+        out += lint_make_os(path, doc, code)
     triggers = doc.get(True, doc.get("on"))
     if "workflow_run" in (triggers if isinstance(triggers, (dict, list)) else []) \
             and "AUROS_APT_SIGNING_KEY" in text and "tools/aptgate.sh decide" not in text:
         out.append("%s: started by workflow_run and names the update-signing key, but never calls tools/aptgate.sh decide" % path)
+    return out
+
+
+def lint_make_os(path, doc, code):
+    out = []
+    for bad in (r"--latest\b", r"make_latest", r"--prerelease=false", r"releases/latest",
+                r"gh\s+release\s+edit", r"workflows/release\.yml"):
+        if re.search(bad, code):
+            out.append("%s: make-os.yml names %s: a custom OS must never be able to touch the public release" % (path, bad.replace("\\", "")))
+    for cmd in re.findall(r"gh\s+release\s+create(?:\\\n|[^\n])*", code):
+        if "--prerelease" not in cmd:
+            out.append("%s: make-os.yml has a `gh release create` without --prerelease" % path)
+    for name, job in doc["jobs"].items():
+        perms = job.get("permissions")
+        if isinstance(perms, dict) and perms.get("contents") == "write" and name not in ("publish", "windows"):
+            out.append("%s: make-os.yml job %s has contents: write: only publish (and windows, e2e.yml's evidence) may" % (path, name))
+        for st in job.get("steps") or []:
+            if isinstance(st, dict) and "${{" in str(st.get("run", "")):
+                out.append("%s: make-os.yml job %s has ${{ }} inside a script: the profile is typed text, pass it through env" % (path, name))
     return out
 
 
@@ -173,9 +200,22 @@ def selftest():
         ("explicit installer token handoff passes",
          "jobs:\n  sign:\n    uses: ./.github/workflows/sign-installer.yml\n    secrets:\n      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}\n", 0),
     ]
+    mk = ("jobs:\n  publish:\n    timeout-minutes: 5\n    permissions:\n      contents: write\n    steps:\n"
+          "      - run: gh release create \"$TAG\" --prerelease --target main rel/*\n")
+    cases += [
+        ("make-os: a prerelease-only publish passes", mk, 0),
+        ("make-os: --latest is refused", mk + "      - run: gh release create x --prerelease --latest\n", 1),
+        ("make-os: a release without --prerelease is refused", mk + "      - run: gh release create \"$TAG\" rel/*\n", 1),
+        ("make-os: a continued release create without --prerelease is refused", mk + "      - run: |\n          gh release create \"$TAG\" \\\n            rel/*\n", 1),
+        ("make-os: releases/latest is refused", mk + "      - run: curl https://github.com/x/releases/latest/download/AurOS-Setup.exe\n", 1),
+        ("make-os: gh release edit is refused", mk + "      - run: gh release edit v1 --prerelease=false\n", 1),
+        ("make-os: contents: write on the build job is refused", mk + "  build:\n    timeout-minutes: 5\n    permissions:\n      contents: write\n    steps:\n      - run: x\n", 1),
+        ("make-os: an input inside a script is refused", mk + "      - run: echo ${{ inputs.profile }}\n", 1),
+        ("make-os: an input through env passes", mk + "      - env:\n          P: ${{ inputs.profile }}\n        run: echo \"$P\"\n", 0),
+    ]
     bad = 0
     for what, text, want in cases:
-        got = 1 if lint("t.yml", text) else 0
+        got = 1 if lint("make-os.yml" if what.startswith("make-os") else "t.yml", text) else 0
         print("    %-52s %s" % (what, "ok" if got == want else "FAIL"))
         bad += got != want
     print("workflowlint selftest: %s" % ("ok" if not bad else "%d wrong" % bad))

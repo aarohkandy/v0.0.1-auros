@@ -17,6 +17,7 @@ on:
       - 'tools/hardengatetest.sh'
       - 'tools/sec004check.sh'
       - 'tools/sec004checktest.sh'
+      - 'tools/makeoscheck.sh'
 
 permissions:
   contents: read
@@ -41,3 +42,5 @@ jobs:
       # SEC-004: the owner-side check of where the signing key lives is red for
       # each missing step and green only when all are done.
       - run: sh tools/sec004checktest.sh
+      # make-os.yml's first step: a hostile profile name or an existing release is refused in seconds.
+      - run: sh tools/makeoscheck.sh selftest

@@ -1,0 +1,562 @@
+# One profile in, one tested installer out: make an AurOS for ONE person by hand.
+#
+#   gh workflow run make-os.yml -f profile=office          (once this file is on main)
+#   git push origin HEAD:refs/heads/makeos/office           (from any branch, before it is)
+#
+# The profile is profiles/<name>.profile at the commit that runs. The push way
+# takes the profile from the last part of the branch name (makeos/office,
+# makeos/for-grandma/office), so this workflow can be proved from a branch
+# before it is on main, and the owner can make an OS with a push alone.
+# docs/MAKE-AN-OS.md is the owner's page for all of it.
+#
+#   check    seconds: the name is a profile (tools/makeoscheck.sh, the repo's own
+#            rule in tools/customize/installer_profile.py), its file is at this
+#            commit, and no release of that name exists yet. Prints what the
+#            Windows journey will do and skip for this profile.
+#   build    build/make-os on the same kind of runner build.yml uses: the image
+#            (Firefox and Flathub required, no fallbacks), the staging
+#            environment, the pieces, AurOS-Setup-<profile>.exe with the
+#            release's address baked in. Then four proofs on what was built, each
+#            a step that fails the job: profileinstalltest, profiletest boot,
+#            profilechoicestest, nosticktest (baked profile). Nothing is
+#            published from here: this job cannot write to the repository.
+#   publish  the ONLY job with contents: write. A PRERELEASE named
+#            os-<profile>-<7 of the commit> with exactly make-os's files and plain
+#            notes. See "WHY THIS CANNOT TOUCH THE PUBLIC RELEASE" below.
+#   windows  e2e.yml (real Windows 11 in a VM) on the published installer, with
+#            the profile, so what it expects and which steps it skips come from
+#            the profile. Skipped when the dispatch says windows=false.
+#   summary  what to paste to the person: the address, the SHA-256, what was proved.
+#
+# WHY THIS CANNOT TOUCH THE PUBLIC RELEASE
+#   - the tag starts with os- ; every place that looks for an AurOS release asks
+#     for v<version>-<sha7> (windows.yml, sources.yml, parity.yml, customize.yml,
+#     cloud/src/builds.js), apt, e2e-, profiles-... and none matches os-.
+#   - it is made with --prerelease and this file never says --latest, never
+#     edits a release and never reads releases/latest (tools/workflowlint.py
+#     rule 13 fails the lint if it ever does). Only a full release moves
+#     releases/latest/download/AurOS-Setup.exe, which the website links to.
+#   - its files carry the profile in their names (AurOS-Setup-<profile>.exe, ...);
+#     the public ones are AurOS-Setup.exe, pieces.txt, auros-desktop.img.gz.*.
+#
+# An hour to build, three quarters of an hour to prove, then the Windows
+# journey (hours). A failed run emails the owner, so the first thing it does is
+# refuse, in seconds, everything it can know is wrong.
+name: make-os
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Profile to make an OS for (profiles/NAME.profile), e.g. office
+        required: true
+        type: string
+      windows:
+        description: Also run the real-Windows install journey on the published installer (hours)
+        required: false
+        type: boolean
+        default: true
+  push:
+    branches: ['makeos/**']
+
+# contents: write belongs to the one job that publishes (SEC-005).
+permissions:
+  contents: read
+  actions: read
+
+# The owner's domain (docs/ops/DOMAIN.md) and website, as build.yml: every
+# address baked into the image and the installer follows them (tools/repo.sh).
+env:
+  AUROS_DOMAIN: ${{ vars.AUROS_DOMAIN }}
+  AUROS_SITE: ${{ vars.AUROS_SITE || '1os.vercel.app' }}
+
+defaults:
+  run:
+    shell: bash
+
+# One run per profile (or per pushed branch) at a time, queued and never
+# cancelled: two builds of one name would fight over the same release.
+concurrency:
+  group: make-os-${{ github.event_name == 'push' && github.ref || inputs.profile }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      profile: ${{ steps.c.outputs.profile }}
+      tag: ${{ steps.c.outputs.tag }}
+      short: ${{ steps.c.outputs.short }}
+      windows: ${{ steps.c.outputs.windows }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: this check refuses what it exists to refuse
+        run: sh tools/makeoscheck.sh selftest
+
+      # The profile is text a person typed (an input, a branch name): it goes
+      # to the script through env, never into a script.
+      - name: which profile, and is its release free
+        id: c
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          PROFILE_IN: ${{ inputs.profile }}
+          WINDOWS_IN: ${{ inputs.windows }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: sh tools/makeoscheck.sh check
+
+      - name: what the Windows journey will do for this profile, and what it will skip
+        env:
+          PROFILE: ${{ steps.c.outputs.profile }}
+          WINDOWS: ${{ steps.c.outputs.windows }}
+        run: |
+          python3 tools/e2e/profileplan.py "$PROFILE" --markdown > "$RUNNER_TEMP/plan.md"
+          { cat "$RUNNER_TEMP/plan.md"
+            [ "$WINDOWS" = true ] || echo "The Windows journey was switched off for this run (windows=false): none of these steps will run."
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: check
+    runs-on: ubuntu-24.04
+    # build ~1 h, proofs ~45 min on a cold cache; a hung step must not hold a runner all day
+    timeout-minutes: 240
+    env:
+      PROFILE: ${{ needs.check.outputs.profile }}
+      TAG: ${{ needs.check.outputs.tag }}
+    outputs:
+      setup_sha256: ${{ steps.out.outputs.setup_sha256 }}
+      image_sha256: ${{ steps.out.outputs.image_sha256 }}
+      image_bytes: ${{ steps.out.outputs.image_bytes }}
+      pieces: ${{ steps.out.outputs.pieces }}
+      download_bytes: ${{ steps.out.outputs.download_bytes }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: what this build will be called
+        run: |
+          echo "T0=$(date +%s)" >> "$GITHUB_ENV"
+          # The address of the pieces is baked into the installer, so it is decided
+          # now: this release, which does not exist yet (the check made sure).
+          base="$(sh tools/repo.sh download)/$TAG/"
+          echo "BASE_URL=$base" >> "$GITHUB_ENV"
+          mkdir -p ev
+          echo "profile $PROFILE, release $TAG, commit $GITHUB_SHA, run $GITHUB_RUN_ID, pieces at $base" | tee ev/build-info.txt
+
+      # What build.yml does, and for the same reasons: the big preinstalled SDKs
+      # this build never uses (~20 GB) go in the background while apt runs (a
+      # profile build peaks near 10 GB, then four proofs copy the image again);
+      # swap stays. The packages are build.yml's (image, staging, installer) and
+      # tests.yml's e2e job's (QEMU, firmware, TPM) in one bounded apt call.
+      - name: room, tools, KVM
+        run: |
+          df -h / /mnt || true
+          ( sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+              /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift \
+              /usr/local/share/chromium /usr/local/julia* 2>/dev/null; echo removed > /tmp/freed ) &
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+              sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sh tools/apt.sh \
+              debootstrap squashfs-tools zstd gdisk dosfstools mtools e2fsprogs \
+              sbsigntool gcc-mingw-w64-x86-64-win32 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev gcc libc6-dev make python3 cpio file binutils \
+              osslsigncode libxml2-utils pigz \
+              qemu-system-x86 qemu-utils ovmf tesseract-ocr iproute2 grub-common swtpm python3-cryptography fdisk
+          while [ ! -f /tmp/freed ]; do sleep 2; done
+          ls -l /dev/kvm
+          [ -w /dev/kvm ] || { echo "::error::no usable /dev/kvm on this runner: the proofs boot the image"; exit 1; }
+          # tests.yml's: the end-to-end scripts ask QEMU for accel=tcg because the
+          # container they were written in has no KVM; here it is rewritten to kvm.
+          sudo tee /usr/local/bin/qemu-system-x86_64 >/dev/null <<'EOF'
+          #!/bin/sh
+          accel="${AUROS_QEMU_ACCEL:-kvm}"
+          for a do
+              shift
+              case "$a" in *accel=tcg*) a=$(printf '%s' "$a" | sed "s/accel=tcg/accel=$accel/") ;; esac
+              set -- "$@" "$a"
+          done
+          exec /usr/bin/qemu-system-x86_64 "$@"
+          EOF
+          sudo chmod 755 /usr/local/bin/qemu-system-x86_64
+          df -h /
+
+      # build.yml's cache, by its exact key, restored only: debootstrap reads just
+      # the release pocket, so the base is the same bytes for every profile that
+      # keeps desktop's base_* lines. A profile with lines of its own gets none
+      # (profiles.yml does the same). Nothing is saved from here.
+      - name: cache key for the debootstrapped base
+        id: basekey
+        run: |
+          if [ "$PROFILE" != desktop ] && grep -qE '^base_(suite|mirror|components)=' "profiles/$PROFILE.profile"; then
+            echo "key=none-$PROFILE-has-its-own-base" | tee -a "$GITHUB_OUTPUT"; exit 0
+          fi
+          k=$( { grep -E '^base_(suite|mirror|components)=' profiles/desktop.profile
+                 sed -n '/^stage_bootstrap()/,/^}/p' build/forge
+                 dpkg-query -W debootstrap; } | sha256sum | cut -c1-16)
+          echo "key=debootstrap-desktop-$k" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: dist/cache/base.tar.zst
+          key: ${{ steps.basekey.outputs.key }}
+      - name: the base, in this profile's work tree
+        run: |
+          if [ -f dist/cache/base.tar.zst ]; then
+            sudo mkdir -p "work/forge/$PROFILE"
+            zstd -dc dist/cache/base.tar.zst | sudo tar -C "work/forge/$PROFILE" --numeric-owner -xf -
+            sudo test -f "work/forge/$PROFILE/rootfs/.forge-bootstrapped"
+            rm -rf dist/cache
+            echo "base from build.yml's cache"
+          else
+            echo "no cached base: forge debootstraps it (about 10 minutes)"
+          fi
+
+      # THE BUILD. build.yml's rules: NOT ALLOW_BROWSER_FALLBACK (this network
+      # reaches Mozilla, so the profile's Firefox must arrive or the build stops)
+      # and REQUIRE_FLATHUB_CATALOGUE (forge only asks it where the profile has
+      # Flathub). make-os runs as root, and sudo drops the environment, so what the
+      # build reads is handed over by name: the domain and site (addresses), the
+      # repository (tools/repo.sh cannot ask git here), and the release's name.
+      # --keep-work: nosticktest takes ntfs-3g out of this rootfs.
+      - name: build/make-os (image, staging, pieces, installer)
+        run: |
+          # root builds in a checkout the runner user owns: let git read it, so
+          # the piece list names the commit instead of "unknown"
+          sudo git config --system --add safe.directory "$PWD"
+          sudo env -u ALLOW_BROWSER_FALLBACK REQUIRE_FLATHUB_CATALOGUE=1 \
+              AUROS_DOMAIN="$AUROS_DOMAIN" AUROS_SITE="$AUROS_SITE" \
+              AUROS_REPO="$GITHUB_REPOSITORY" AUROS_BUILD_TAG="$TAG" \
+              ./build/make-os "$PROFILE" --base-url "$BASE_URL" --keep-work 2>&1 | tee ev/make-os.log
+          sudo chown -R "$(id -u):$(id -g)" out
+          ls -la "out/os/$PROFILE"
+          echo "make-os $(( $(date +%s) - T0 )) s" | tee -a ev/build-info.txt
+          df -h /
+
+      - name: what the image says went wrong while building it
+        run: |
+          W="work/forge/$PROFILE/rootfs/etc/auros/build-warnings"
+          if sudo test -f "$W"; then sudo cat "$W" > ev/build-warnings; else : > ev/build-warnings; fi
+          echo "--- /etc/auros/build-warnings ($(wc -l < ev/build-warnings) lines)"
+          cat ev/build-warnings
+          if grep -qE '^browser=MISSING$|^browser=.*\(fallback;' ev/build-warnings; then
+            echo "::warning::the image records a browser problem: $(grep '^browser=' ev/build-warnings)"
+          fi
+          cp "out/manifests/$PROFILE.json" ev/manifest.json
+          { echo "### build-warnings of $PROFILE"; echo '```'; cat ev/build-warnings; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      # The files publish will upload: exactly make-os's, and the numbers the
+      # release notes and the summary quote.
+      - name: what was made
+        id: out
+        run: |
+          d="out/os/$PROFILE"
+          ( cd "$d" && sha256sum -c "SHA256SUMS-$PROFILE" )
+          exe="$d/AurOS-Setup-$PROFILE.exe"
+          n=$(grep -c '^piece ' "$d/pieces-$PROFILE.txt")
+          dl=$(du -cb "$d"/auros-"$PROFILE".img.gz.* | tail -1 | cut -f1)
+          {
+            echo "setup_sha256=$(sha256sum "$exe" | cut -d' ' -f1)"
+            echo "image_sha256=$(cat "$d/image-$PROFILE.sha256")"
+            echo "image_bytes=$(cat "$d/image-$PROFILE.bytes")"
+            echo "pieces=$n"
+            echo "download_bytes=$dl"
+          } | tee -a "$GITHUB_OUTPUT" ev/build-info.txt
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: os-${{ needs.check.outputs.profile }}
+          path: out/os/${{ needs.check.outputs.profile }}/
+          retention-days: 14
+          compression-level: 0
+          if-no-files-found: error
+
+      # ── the proofs. Each is a step that fails the job, and publish waits for
+      # all of them. Cheapest first.
+
+      # No root, no QEMU: the installer built for THIS profile writes this profile
+      # in its journal, manifest and file name, offers the look the profile allows,
+      # and the staging environment's own finder refuses any other profile's image.
+      - name: proof 1 - an installer built for a profile installs that profile (profileinstalltest)
+        run: sh tools/profileinstalltest.sh 2>&1 | tee ev/profileinstalltest.txt
+
+      # The real image, started under OVMF in QEMU with KVM until its own desktop
+      # is up: what is IN it (packages, policy, browser), who runs it, in which
+      # language, which units failed, a photograph of the screen.
+      - name: proof 2 - the real image starts up to its desktop (profiletest boot)
+        run: |
+          sudo env PATH="$PATH" sh tools/profiletest.sh boot "$PROFILE" "$PWD/ev" 2>&1 | tee ev/profiletest-boot.txt
+
+      # The choices.conf THIS installer writes (the look card, the profile's theme),
+      # put where the installer puts it, applied by this image's first boot.
+      - name: proof 3 - what the installer writes, applied by the real image (profilechoicestest)
+        run: |
+          sudo env PATH="$PATH" sh tools/profilechoicestest.sh "$PROFILE" 2>&1 | tee ev/profilechoicestest.txt
+
+      # The whole install with NO memory stick, by the installer's own phase engine
+      # built for this profile (NOSTICK_PROFILE=baked), over a synthetic Windows
+      # disk: Windows' files intact, then Put Windows back. Four firmware boots.
+      # (tests.yml runs it for desktop in its own job, ~25 minutes under KVM.)
+      - name: proof 4 - the whole install and the way back, with no stick (nosticktest, baked profile)
+        timeout-minutes: 90
+        run: |
+          sudo env PATH="$PATH" NOSTICK_PROFILE=baked RFS="work/forge/$PROFILE/rootfs" \
+              sh tools/nosticktest.sh 2>&1 | tee ev/nosticktest.txt
+
+      - name: the proofs' evidence
+        if: ${{ !cancelled() }}
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" ev
+          gzip -9 ev/make-os.log ev/nosticktest.txt 2>/dev/null || true
+          ls -la ev
+          {
+            echo "### proofs for $PROFILE"
+            echo '```'
+            for f in ev/profileinstalltest.txt ev/profiletest-boot.txt ev/profilechoicestest.txt; do
+              [ -f "$f" ] && { echo "== $f"; tail -6 "$f"; }
+            done
+            [ -f ev/nosticktest.txt.gz ] && { echo "== nosticktest"; zcat ev/nosticktest.txt.gz | tail -6; }
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: os-${{ needs.check.outputs.profile }}-evidence
+          path: ev/
+          retention-days: 30
+          if-no-files-found: ignore
+
+  publish:
+    needs: [check, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ needs.check.outputs.tag }}
+      setup_sha256: ${{ needs.build.outputs.setup_sha256 }}
+    env:
+      PROFILE: ${{ needs.check.outputs.profile }}
+      TAG: ${{ needs.check.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      # checkout first: it cleans untracked files, so after the download it would delete them
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: os-${{ needs.check.outputs.profile }}
+          path: rel
+
+      # The bytes about to be published are the bytes the build job proved, and
+      # nothing else is in the folder: the release has exactly make-os's files.
+      - name: what is about to be published is what was built
+        env:
+          WANT_SETUP: ${{ needs.build.outputs.setup_sha256 }}
+        run: |
+          cd rel
+          sha256sum -c "SHA256SUMS-$PROFILE"
+          [ "$(sha256sum "AurOS-Setup-$PROFILE.exe" | cut -d' ' -f1)" = "$WANT_SETUP" ] \
+            || { echo "::error::the installer is not the one the build job made"; exit 1; }
+          ls -1 > /tmp/have.txt
+          { echo "AurOS-Setup-$PROFILE.exe"; echo "pieces-$PROFILE.txt"; echo "image-$PROFILE.sha256"
+            echo "image-$PROFILE.bytes"; echo "SHA256SUMS-$PROFILE"; ls -1 | grep -E "^auros-$PROFILE\.img\.gz\.[0-9]{3}\$"; } | sort > /tmp/want.txt
+          sort /tmp/have.txt | diff - /tmp/want.txt || { echo "::error::the folder holds files make-os does not make, or lacks some"; exit 1; }
+          # every piece is the one the list the installer carries describes
+          ( grep '^piece ' "pieces-$PROFILE.txt" | awk '{print $4"  "$2}' | sha256sum -c --quiet )
+          # and the list points at THIS release, which is the name baked into the installer
+          want_base="$(cd .. && sh tools/repo.sh download)/$TAG/"
+          [ "$(sed -n 's/^base //p' "pieces-$PROFILE.txt")" = "$want_base" ] \
+            || { echo "::error::the piece list points at $(sed -n 's/^base //p' "pieces-$PROFILE.txt"), not at $want_base"; exit 1; }
+          # (into a file first: under pipefail `strings | grep -q` fails when grep stops reading)
+          strings -a "AurOS-Setup-$PROFILE.exe" > /tmp/strings.txt
+          grep -qF "$want_base" /tmp/strings.txt \
+            || { echo "::error::the installer does not carry $want_base"; exit 1; }
+          echo "ok: $(ls -1 | wc -l) files, all as built"
+
+      - name: the notes, in plain words
+        env:
+          IMAGE_SHA256: ${{ needs.build.outputs.image_sha256 }}
+          IMAGE_BYTES: ${{ needs.build.outputs.image_bytes }}
+          SETUP_SHA256: ${{ needs.build.outputs.setup_sha256 }}
+          PIECES: ${{ needs.build.outputs.pieces }}
+          DOWNLOAD_BYTES: ${{ needs.build.outputs.download_bytes }}
+          WINDOWS: ${{ needs.check.outputs.windows }}
+        run: |
+          python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, "tools/customize")
+          import installer_profile as ip
+          E = os.environ.get
+          p = E("PROFILE")
+          v = ip.resolve(p, ip.ROOT / "profiles")
+          repo, run = E("GITHUB_REPOSITORY"), "%s/%s/actions/runs/%s" % (E("GITHUB_SERVER_URL"), E("GITHUB_REPOSITORY"), E("GITHUB_RUN_ID"))
+          exe = "AurOS-Setup-%s.exe" % p
+          size = os.path.getsize("rel/" + exe)
+          gb = lambda n: "%.1f GB" % (int(n) / 1e9)
+          windows = ("Starts after this is published, in [the same run](%s), on a real Windows 11 in a virtual machine: the website in Edge, the download, "
+                     "Windows' warnings, the installer, the restart, AurOS starting. This note was written before it ran and does not say it passed." % run
+                     if E("WINDOWS") == "true" else
+                     "Was not asked for in this run (windows=false).")
+          notes = f"""**{v.get('profile_name', 'AurOS ' + p)} (`{p}`): a custom build. It is not the public AurOS.**
+
+          This is an AurOS made by hand for one purpose, from the profile `{p}` at commit `{E('GITHUB_SHA')}`, built and tested by [Actions run {E('GITHUB_RUN_ID')}]({run}).
+
+          - **Not the public download.** The public AurOS is the release marked *Latest* on this repository. This is a prerelease, and nothing on the website links to it. It reaches a person only because someone sends her this address.
+          - **Not signed.** Windows asks before it starts an unsigned file. In Edge: *Keep*, then *Keep anyway*. On the blue panel: *More info*, then *Run anyway*. On a computer with Smart App Control on, that has to be switched off first.
+          - **To install:** download `{exe}` and open it. It downloads the rest itself ({gb(E('DOWNLOAD_BYTES'))}, in {E('PIECES')} pieces of up to 90 MiB, each checked).
+          - **To check the file you got is the one built here:** its SHA-256 must be `{E('SETUP_SHA256')}`. In PowerShell: `Get-FileHash $HOME\\Downloads\\{exe} -Algorithm SHA256`. On a Mac or Linux: `shasum -a 256 {exe}`.
+
+          | | |
+          |---|---|
+          | Installer | `{exe}`, {size} bytes, SHA-256 `{E('SETUP_SHA256')}` |
+          | Image it installs | {E('IMAGE_BYTES')} bytes, SHA-256 `{E('IMAGE_SHA256')}` |
+          | Download | {E('DOWNLOAD_BYTES')} bytes of gzip in {E('PIECES')} pieces (`pieces-{p}.txt`) |
+          | All the files | `SHA256SUMS-{p}` |
+
+          **Tested in this run, before this was published** (every item passed, or this release would not exist):
+
+          - The image built by `build/make-os {p}` on GitHub's Ubuntu 24.04 runner, with Firefox and Flathub required where the profile has them, not replaced by fallbacks. The pieces fetched back by the installer's own code over HTTP and hashed to the image; the installer carries this profile, the staging environment and the signed boot loader, and a manifest Windows accepts.
+          - `profileinstalltest`: the installer built for this profile installs this profile, and the staging environment refuses an image of any other.
+          - `profiletest boot`: the real image, started in QEMU with KVM under UEFI, reached its own desktop; what is in it (programs, policy, browser) was read off the disk.
+          - `profilechoicestest`: the look and theme this installer writes are the ones this image shows after its first start.
+          - `nosticktest` with this installer's profile: a whole install over a Windows disk with no memory stick, Windows' files unchanged, and Put Windows back.
+          - The Windows install journey: {windows}
+
+          **Not tested:** a real computer. No real computer has run AurOS yet; everything above ran in virtual machines.
+
+          **Updates.** Ubuntu's security and bug fixes install by themselves, in the background, as on every AurOS. AurOS's own parts (the desktop, the start-up code, the way back to Windows) do **not** update on a custom build: AurOS's update channel is switched off in every image that is not the public desktop one. A newer AurOS means a new installer.
+
+          **Source code.** AurOS's own code is this repository at the commit above. The public releases each have a sibling `sources-` release with the Ubuntu source packages; custom builds do not get one.
+          """
+          open("notes.md", "w").write(notes)
+          PY
+          cat notes.md
+
+      # A prerelease, in one command with all its files. The tag goes on the tip of
+      # the default branch, as release.yml's does: the workflow token may only tag
+      # a branch head, and nothing a person downloads depends on where the tag
+      # points (the address baked into the installer names the tag, and the notes
+      # name the commit). If the command fails part way, the half-made release is
+      # removed, so a rerun is never blocked by it and never mixes two builds.
+      - name: the release (a prerelease with this tag, and no other)
+        run: |
+          # (the check said so an hour ago; asked again, because it is cheap)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::the release $TAG exists now. Not touching it. To start over: gh release delete $TAG --cleanup-tag -y"
+            exit 1
+          fi
+          def=$(gh api "repos/$GITHUB_REPOSITORY" --jq .default_branch)
+          printf '\n(The tag points at the tip of `%s` when this was published, because the workflow token may only tag a branch head. The files attached were built from `%s`.)\n' "$def" "$GITHUB_SHA" >> notes.md
+          if ! gh release create "$TAG" --prerelease --target "$def" \
+                 --title "AurOS custom: $PROFILE ($TAG)" --notes-file notes.md \
+                 rel/*; then
+            echo "::error::could not make the release $TAG; removing what was made of it"
+            gh release delete "$TAG" --cleanup-tag -y || true
+            exit 1
+          fi
+          gh release view "$TAG" --json isPrerelease,isDraft,tagName --jq '"\(.tagName) prerelease=\(.isPrerelease) draft=\(.isDraft)"'
+          [ "$(gh release view "$TAG" --json isPrerelease --jq .isPrerelease)" = true ] \
+            || { echo "::error::$TAG is not a prerelease"; exit 1; }
+
+      # What a person downloads is what was built: every file read back from its
+      # public address, through GitHub's 302, and the pieces through the address
+      # baked into the installer, then a Range request answered 206.
+      - name: what a person downloads is what was built
+        run: |
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          mkdir -p back && cd back
+          for f in $(ls ../rel); do
+            curl -fsSL --retry 5 -o "$f" "$base/$f"
+            cmp "$f" "../rel/$f"
+          done
+          sha256sum "AurOS-Setup-$PROFILE.exe"
+          base2=$(sed -n 's/^base //p' "pieces-$PROFILE.txt")
+          grep '^piece ' "pieces-$PROFILE.txt" | while read -r _ name bytes sha; do
+            got=$(curl -fsSL --retry 5 "$base2$name" | sha256sum | cut -d' ' -f1)
+            [ "$got" = "$sha" ] || { echo "$name: $got, wanted $sha"; exit 1; }
+            echo "$name ok"
+          done
+          first=$(grep -m1 '^piece ' "pieces-$PROFILE.txt" | cut -d' ' -f2)
+          curl -fsSL -r 1000000-1000099 -D hdr.txt -o part.bin "$base2$first"
+          grep -iE '^HTTP/[0-9.]+ 206' hdr.txt
+          dd if="../rel/$first" of=want.bin bs=100 skip=10000 count=1 status=none
+          cmp part.bin want.bin
+          echo "read back, Range honoured"
+
+  windows:
+    needs: [check, publish]
+    if: ${{ !cancelled() && needs.publish.result == 'success' && needs.check.outputs.windows == 'true' }}
+    uses: ./.github/workflows/e2e.yml
+    # e2e.yml's jobs publish their evidence as a prerelease e2e-<run>
+    permissions:
+      contents: write
+      actions: read
+    with:
+      installer_url: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}/AurOS-Setup-${{ needs.check.outputs.profile }}.exe
+      installer_sha256: ${{ needs.publish.outputs.setup_sha256 }}
+      variants: base
+      profile: ${{ needs.check.outputs.profile }}
+
+  summary:
+    needs: [check, build, publish, windows]
+    if: ${{ always() && needs.check.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: what to tell the person
+        env:
+          PROFILE: ${{ needs.check.outputs.profile }}
+          TAG: ${{ needs.check.outputs.tag }}
+          REPO: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SETUP_SHA256: ${{ needs.build.outputs.setup_sha256 }}
+          R_BUILD: ${{ needs.build.result }}
+          R_PUBLISH: ${{ needs.publish.result }}
+          R_WINDOWS: ${{ needs.windows.result }}
+          WINDOWS_ASKED: ${{ needs.check.outputs.windows }}
+        run: |
+          exe="AurOS-Setup-$PROFILE.exe"
+          url="https://github.com/$REPO/releases/download/$TAG/$exe"
+          {
+            echo "## AurOS for \`$PROFILE\`, commit \`${COMMIT:0:7}\`"
+            echo
+            if [ "$R_PUBLISH" != success ]; then
+              echo "**Nothing was published.** Build: $R_BUILD. Publish: $R_PUBLISH. Nothing below is ready to send. What failed is in [the run]($RUN_URL)."
+              exit 0
+            fi
+            echo "Installer: $url"
+            echo "SHA-256: \`$SETUP_SHA256\`"
+            echo
+            echo "**Proved in this run, on the exact files published** (the build job passes only if every one passed):"
+            echo "- the image was built, and the installer's own code puts the pieces back into it"
+            echo "- the installer built for \`$PROFILE\` installs \`$PROFILE\` and refuses any other (profileinstalltest)"
+            echo "- the real image starts up to its own desktop under UEFI and KVM (profiletest boot)"
+            echo "- the look and theme the installer writes are the ones the image shows (profilechoicestest)"
+            echo "- a whole install and the way back, with no memory stick (nosticktest)"
+            case "$R_WINDOWS" in
+              success) echo "- a real Windows 11 virtual machine: the website, the download, the warnings, the installer, the restart, AurOS. The steps that do not apply to this profile were skipped by a stated rule: see the e2e run's summary" ;;
+              failure|cancelled) echo "- **the Windows journey did not pass** ($R_WINDOWS): see [the run]($RUN_URL). Do not send this yet." ;;
+              *) [ "$WINDOWS_ASKED" = true ] && echo "- the Windows journey did not run ($R_WINDOWS)" || echo "- the Windows journey was switched off for this run" ;;
+            esac
+            echo
+            echo "**Not proved:** a real computer. No real computer has run AurOS yet."
+            echo
+            echo "### To paste to the person"
+            echo
+            echo '```'
+            echo "Here is your AurOS. Download this file:"
+            echo "$url"
+            echo
+            echo "Windows will say it does not know who made it, because it is not signed yet."
+            echo "In Edge, press Keep, then Keep anyway. On the blue panel, press More info, then Run anyway."
+            echo
+            echo "To be sure it is the right file, open PowerShell and type:"
+            echo "Get-FileHash \$HOME\\Downloads\\$exe"
+            echo "The long code it shows must be:"
+            echo "$SETUP_SHA256"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
