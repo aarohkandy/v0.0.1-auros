@@ -1380,7 +1380,10 @@ static void choose(shell_ctx *c, int idx)
          * path a theme change takes. Sending it to ourselves is how
          * the change happens without restarting anything. */
         c->want_reload = 1;
-        snprintf(S.said, sizeof S.said, "This computer now works like %s.",
+        /* The name is a name, not a noun: "works like Like Windows" was said for the one
+         * look whose name begins with "Like". It comes last, after a colon, so it reads
+         * right whatever it is called ("Big and simple", "One thing at a time"). */
+        snprintf(S.said, sizeof S.said, "This computer now works the way you chose: %s.",
                  S.ch[idx].label);
         return;
     }
