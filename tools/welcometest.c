@@ -612,6 +612,57 @@ int main(void)
         unlink(WELCOME_RUN "/answer");
         welcome_open_stick(&c);
         welcome_key(&c, 1);
+
+        /* What she is told, and said once: what goes in it, and how it ended. */
+        if (!SURF_) { shell_fonts_load(&F_, &c); SURF_ = surface_new(c.screen_w, 768); }
+        c.welcome_open = 0;
+        welcome_open_report(&c);
+        ok("the page where she chooses says what goes in the file",
+           says_page(&c, W_STICK_PICK, "It lists this computer's parts, how it is set up"));
+        ok("...and does not call it small (it can be some megabytes)",
+           !says_page(&c, W_STICK_PLUG, "small") && says_page(&c, W_STICK_PLUG, "one text file"));
+        press_nth(&c, W_STICK_PICK, 0);
+        unlink(WELCOME_RUN "/answer");
+        usleep(30000);                        /* the answer must be newer than the ask */
+        put(WELCOME_ANSWER "/result", "request=report\nresult=failed\ncode=4\nwhy=noroom\nnote=there is not enough room on the USB stick for the report; no report was saved\n");
+        welcome_step(&c);
+        ok("a full stick is the trouble screen, in the answer's words",
+           welcome_page() == W_TROUBLE && says(&c, "There is not enough room on the USB stick for the report"));
+        press_nth(&c, W_STICK_PICK, 0);
+        unlink(WELCOME_RUN "/answer");
+        usleep(30000);
+        put(WELCOME_ANSWER "/result", "request=report\nresult=failed\ncode=16\nwhy=unclosed\nnote=the report may not be on the USB stick, because AurOS could not finish writing to it. Leave the stick in and try again\n");
+        welcome_step(&c);
+        ok("a stick that would not let go is the trouble screen, never \"safe to take out\"",
+           welcome_page() == W_TROUBLE && says(&c, "The report may not be on the USB stick") && !says(&c, "safe to take the stick out"));
+
+        /* A request already waiting. The same one is answered; any other would be answered as
+         * itself, never as this, so she is told it could not be started rather than left on
+         * "Saving the report", which has no button. */
+        welcome_open_report(&c);
+        {
+            welcome_view vp = { W_STICK_PICK, 0 };
+            rect b2[16];
+            int n2 = welcome_targets(&c, c.screen_w, c.screen_h, &vp, b2, 16);
+            ok("(the stick page has a stick to press)", n2 >= 2);
+            welcome_set_page(W_STICK_PICK);
+            c.welcome_open = 1;
+            put(WELCOME_RUN "/answer", "stick:/dev/sdb1");
+            welcome_click(&c, b2[0].x + b2[0].w / 2, b2[0].y + b2[0].h / 2);
+            ok("a different request already waiting: the report is not started...",
+               welcome_page() == W_TROUBLE && says(&c, "could not start saving the report"));
+            ok("...nothing is waited for (no screen with no way out)", welcome_wait_ms() != 200);
+            ok("...and the waiting request is left as it was", !strcmp(asked_now(), "stick:/dev/sdb1"));
+
+            welcome_set_page(W_STICK_PICK);
+            c.welcome_open = 1;
+            put(WELCOME_RUN "/answer", "report:/dev/sdb1");
+            welcome_click(&c, b2[0].x + b2[0].w / 2, b2[0].y + b2[0].h / 2);
+            ok("the same report already waiting: it is the one she waits for", welcome_page() == W_STICK_SAVING && welcome_wait_ms() == 200);
+            unlink(WELCOME_RUN "/answer");
+            welcome_open_stick(&c);
+            welcome_key(&c, 1);
+        }
     }
 
     /* ── Put Windows back could not save her files first ───────────── */
@@ -651,8 +702,7 @@ int main(void)
     /* WHAT THE PAGES SAY, before she presses, in words that match what the code does. */
     printf("\n  what the pages tell her\n");
     {
-        shell_fonts_load(&F_, &c);
-        SURF_ = surface_new(c.screen_w, 768);
+        if (!SURF_) { shell_fonts_load(&F_, &c); SURF_ = surface_new(c.screen_w, 768); }
         ok("\"Yes\" says it can be undone, and where",
            says_page(&c, W_SURE_YES, "press Settings, then Put Windows back"));
         ok("...and does not promise it will work, nor that a reason will be given",

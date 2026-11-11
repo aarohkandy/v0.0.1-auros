@@ -159,6 +159,8 @@ static int windows_worth_importing(void)
  * answered as request=import, "stick:/dev/sdb1" as request=stick. */
 static int ask_word(const char *word, const char *expect)
 {
+    char was[sizeof W.wanted];
+    snprintf(was, sizeof was, "%s", W.wanted);
     snprintf(W.wanted, sizeof W.wanted, "%s", expect);
     W.asked = 1;
     W.note[0] = 0;
@@ -178,10 +180,30 @@ static int ask_word(const char *word, const char *expect)
      * previous session, or from an answering service that was killed
      * -- made this return "in flight" while nothing ever polled for
      * the answer. The panel then sat on "One moment" for ever, which
-     * is the one screen with no way out of it. */
-    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
-    if (fd < 0 && errno == EEXIST) return 0;
-    if (fd < 0) { W.asked = 0; return -1; }
+     * is the one screen with no way out of it.
+     *
+     * BUT ONLY FOR THE SAME REQUEST. A leftover that is some other word will be
+     * answered as that word, never as this one, and the page that waits for this
+     * one (Saving the report, with no button) would be the same screen again. So a
+     * different request already there is a failure, said honestly; the same one is
+     * answered, and that answer is this panel's. (Twice: it may be taken between
+     * the two looks.) */
+    int fd = -1;
+    for (int tries = 0; tries < 2; tries++) {
+        fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+        if (fd >= 0 || errno != EEXIST) break;
+        char have[96];
+        ssize_t hn = -1;
+        int rf = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        if (rf >= 0) { hn = read(rf, have, sizeof have - 1); close(rf); }
+        if (hn < 0) continue;
+        have[hn] = 0;
+        if (!strcmp(have, word)) return 0;
+        W.asked = 0;
+        snprintf(W.wanted, sizeof W.wanted, "%s", was);
+        return -1;
+    }
+    if (fd < 0) { W.asked = 0; snprintf(W.wanted, sizeof W.wanted, "%s", was); return -1; }
     ssize_t k = write(fd, word, strlen(word));
     close(fd);
     if (k != (ssize_t)strlen(word)) { W.asked = 0; return -1; }
@@ -876,11 +898,11 @@ static const char *sub_of(int page, int can_import)
     case W_EMPTY:     return W.ctx && !W.bring
                           ? "There were no documents, pictures, music or videos of yours in AurOS to save."
                           : "AurOS looked in Windows and found no documents, pictures, music or videos.";
-    case W_STICK_PLUG:   return W.report ? "AurOS will save one small text file on it, for the person who helps you."
+    case W_STICK_PLUG:   return W.report ? "AurOS will save one text file on it, for the person who helps you."
                                          : "AurOS will save your documents, pictures, music and videos on it.";
     case W_STICK_PICK:   return W.report ? "The report is saved on the one you press." : "Your files are saved on the one you press.";
     case W_STICK_SAVING: return "Leave the USB stick in and the computer on.";
-    case W_STICK_DONE:   return W.report ? "It is a file called AurOS-report. It is safe to take the stick out now."
+    case W_STICK_DONE:   return W.report ? "The file's name starts with AurOS-report. It is safe to take the stick out now."
                                          : "They are in the folder \"From AurOS\". It is safe to take the stick out now.";
     case W_BLOCKED:
         /* Why, in her words. AurOS saves her files into Windows before it
@@ -948,8 +970,10 @@ static int body_of(int page, int partial, const char *lines[3])
                               : "It needs room for them. Anything already on the stick stays there.";
         break;
     case W_STICK_PICK:
-        lines[n++] = W.report ? "Nothing on the stick is deleted. Wi-Fi passwords are never read, but give it only to someone you trust."
-                              : "Nothing on the stick is deleted.";
+        if (W.report) {
+            lines[n++] = "It lists this computer's parts, how it is set up, and the problems it has reported.";
+            lines[n++] = "Nothing on the stick is deleted. Wi-Fi passwords are never read, but give it only to someone you trust.";
+        } else lines[n++] = "Nothing on the stick is deleted.";
         break;
     case W_STICK_SAVING:
         if (W.report) { lines[n++] = "This takes a minute. Nothing on this computer is changed."; break; }
