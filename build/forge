@@ -1061,10 +1061,9 @@ EOL
     inchroot "update-desktop-database /usr/local/share/applications >/dev/null 2>&1" || true
     inchroot "update-mime-database /usr/share/mime >/dev/null 2>&1" || true
 
-    # Her folders -- Documents, Pictures, Downloads -- created with the
-    # names her language uses, which is what Ferry copies into and what
-    # the file manager opens on.
-    inchroot "xdg-user-dirs-update >/dev/null 2>&1" || true
+    # Her folders -- Documents, Pictures, Music, Videos -- are made in stage 4,
+    # where the account exists (rootfs/usr/lib/auros/home-folders). Running
+    # xdg-user-dirs-update here made them in /root, and her home had none.
     note "file types set: a .deb installs, a PDF opens, a folder browses"
 }
 
@@ -2075,9 +2074,17 @@ EOL
         warn "whatever each one gates is unavailable. If that was not"
         warn "intended, the package that creates it has been trimmed."
     fi
+    # HER FOLDERS FIRST, in /etc/skel, so the account useradd makes next (and any made
+    # later) starts with Documents, Pictures, Music, Videos, Downloads and Desktop.
+    sh "$RFS/usr/lib/auros/home-folders" "$RFS/etc/skel" \
+        || die "could not make her folders in /etc/skel"
     inchroot "id -u $default_user >/dev/null 2>&1 || \
               useradd -m -s /bin/bash -G '$AUROS_GROUPS' '$default_user'" \
         || die "could not create the account $default_user"
+    # ...and in a home that already existed (a rebuild into an old rootfs), as hers.
+    sh "$RFS/usr/lib/auros/home-folders" "$RFS/home/$default_user" \
+        && inchroot "chown -R $default_user:$default_user /home/$default_user" \
+        || die "could not make her folders in /home/$default_user"
     # And on an image whose account already existed from an earlier
     # build, the groups are added rather than assumed. NOT silenced:
     # this failing is the thing that leaves a desktop with no sound, no

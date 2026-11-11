@@ -89,6 +89,10 @@ PAMName=aurshell
 # itself the moment it appears -- a second or so into the boot, long
 # before anything is clicked -- and this wrapper is what a machine
 # whose user manager never starts falls back to. See run.c.
+# HER FOLDERS (Documents, Pictures, Music, Videos ...), before every start, as her: a home made
+# before this line, or by anything but build/forge, has none, and nothing in her session would
+# ever make them. Folders that exist are not touched; `-` so a failure never costs her the desktop.
+ExecStartPre=-/usr/lib/auros/home-folders
 # $AURSHELL_SAFE is empty unless the desktop has failed three times in
 # ten minutes; then it names the plain home and the machine's own
 # settings (aurshell.service.d/50-auros-safe-mode.conf, shell-guard).
