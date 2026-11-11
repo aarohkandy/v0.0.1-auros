@@ -9,6 +9,8 @@
 
 > **If the lead stopped (usage limit, crash): [docs/handoff/LEAD-RESUME.md](docs/handoff/LEAD-RESUME.md) is the exact procedure to take over mid-flight.**
 
+> **Making an AurOS for one person (a profile, one workflow, one installer): [docs/MAKE-AN-OS.md](docs/MAKE-AN-OS.md).**
+
 > **The plan: [docs/ROADMAP.md](docs/ROADMAP.md) (v0.1 it works → v0.2 every PC under an hour → v0.3 safe for years → v1.0 people pay).**
 
 
