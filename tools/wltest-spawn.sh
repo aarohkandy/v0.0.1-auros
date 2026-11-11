@@ -2,7 +2,7 @@
 # wltest-spawn.sh -- build and run tools/wltest-spawn.c (a program the shell starts begins in her home
 # folder, and the shell can tell running from handed off from failed).
 #
-#   sh tools/wltest-spawn.sh
+#   sh tools/wltest-spawn.sh [-asan]
 #   AURWL_C=/path/aurwl.c       test a different compositor source (to show a check can fail)
 #
 # Needs libwayland-dev, libxkbcommon-dev, libdbus-1-dev, pkg-config, cc (the
@@ -15,7 +15,11 @@ OUT="${TMPDIR:-/tmp}/wltest-spawn.$$"
 mkdir -p "$OUT/run"
 chmod 700 "$OUT/run"
 trap 'rm -rf "$OUT"' EXIT INT TERM
-cc -O1 -g -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o "$OUT/wltest-spawn" \
+CFLAGS="-O1 -g -std=gnu11 -Wall -Wextra -Wno-unused-parameter"
+if [ "${1:-}" = "-asan" ]; then
+    CFLAGS="$CFLAGS -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+fi
+cc $CFLAGS -o "$OUT/wltest-spawn" \
    "$HERE/wltest-spawn.c" "${AURWL_C:-$W/aurwl.c}" "$W/textinput.c" \
    "$ROOT/src/aurshell/draw.c" "$ROOT/src/aurshell/session.c" "$ROOT/src/aurshell/cursor.c" "$ROOT/src/aurshell/run.c" \
    "$ROOT/src/aurshell/shellcommon.c" "$ROOT/src/aurshell/anim.c" "$ROOT/src/common/theme.c" \
