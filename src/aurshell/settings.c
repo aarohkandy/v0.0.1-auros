@@ -542,13 +542,18 @@ int settings_page(void) { return S.page; }
 /* The printer tool, which build/forge's rename calls "Printers". Its launcher is a settings
  * page as far as the program list is concerned (apps.c hides those), so this row is where she
  * finds it. Only where the tool is installed (a control that does nothing is worse than none)
- * and where nobody has limited which programs she may start. Not where she may not add things
- * to the computer either: build/forge grants the printer permission only with allow_user_install,
- * and without it the tool's Add asks for a password nobody here can give. */
+ * and where nobody has limited which programs she may start.
+ *
+ * NOT gated on allow_user_install. It was: "without it the tool's Add asks for a password
+ * nobody here can give" -- because build/forge granted the printer permission only together
+ * with installing software, as if they were one thing. They are not. An office adds cups and
+ * system-config-printer to its machines because the people at them print, and an administrator
+ * who decides what is INSTALLED has not decided that nobody may add a printer: so the printer
+ * permission follows the printer tool, not the install policy, and so does this row. */
 static const char *printer_tool(void) { return dir_of("AUROS_PRINTER_TOOL", "/usr/bin/system-config-printer"); }
 static int printers_here(const shell_ctx *c)
 {
-    if (c->kiosk || !c->allow_install || c->deny_all_apps || c->allowed_apps[0] || c->blocked_apps[0]) return 0;
+    if (c->kiosk || c->deny_all_apps || c->allowed_apps[0] || c->blocked_apps[0]) return 0;
     return c->spawn && access(printer_tool(), X_OK) == 0;
 }
 
@@ -583,6 +588,7 @@ void settings_opened(shell_ctx *c)
     S.sel = -1;
     S.drag_row = -1;
     S.hover_act = -1;
+    if (S.theme_pid <= 0) S.said[0] = 0;     /* "Now using Light." is not news the next time she opens this */
     /* Ask the machine, rather than trusting what we last set: she may
      * have used the keys on the keyboard since, or the battery may
      * have moved on. */

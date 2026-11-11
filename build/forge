@@ -2366,7 +2366,13 @@ EOL
         # go stale when the package changes either.
         print_cases=""
         cups_policy="$RFS/usr/share/polkit-1/actions/org.opensuse.cupspkhelper.mechanism.policy"
-        if [ "$allow_user_install" = "yes" ] && [ -f "$cups_policy" ]; then
+        #
+        # NOT TIED TO allow_user_install. It was, and the office profile (which decides what is
+        # installed, and installs cups and the printer tool because its people print) got no
+        # permission to add a printer and no Printers row in Settings. Setting up a printer is not
+        # installing software; it follows the printer tool being on the image, for everybody
+        # but a kiosk (this whole block).
+        if [ -f "$cups_policy" ]; then
             n_print=0
             while read -r _a; do
                 [ -n "$_a" ] || continue
@@ -2386,7 +2392,7 @@ EOP
                 warn "recognises, so adding a printer will ask for a password"
                 warn "that nothing in this product can supply."
             fi
-        elif [ "$allow_user_install" = "yes" ]; then
+        elif [ -x "$RFS/usr/bin/system-config-printer" ]; then
             warn "cups-pk-helper is not in this image, so adding a printer will"
             warn "ask for a password nothing here can supply. Only printers"
             warn "cups-browsed discovers by itself will work."

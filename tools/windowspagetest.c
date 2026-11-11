@@ -202,15 +202,17 @@ int main(void)
         ok(!shown("Printers") && !(press("Show more") && shown("Printers")),
            "where only some programs are allowed, no Printers row either");
         C.allowed_apps[0] = 0;
-        /* build/forge gives her the printer permission only when she may add things to the
-         * computer; without it the tool's Add asks for a password nobody here can give. */
+        /* PRINTING IS NOT INSTALLING SOFTWARE. The row used to hide where she may not add programs
+         * (the office profile: allow_user_install="no"), so an office that put cups and the printer
+         * tool on its machines had no way in; build/forge now grants the printer permission whenever
+         * the printer tool is there (tools/printerpolicytest.sh), so the row is there too. */
         C.allow_install = 0;
         settings_opened(&C);
-        ok(!shown("Printers") && !(press("Show more") && shown("Printers")),
-           "where she may not add things to the computer, no Printers row (its Add would ask for a password)");
+        ok(shown("Printers") || (press("Show more") && shown("Printers")),
+           "where she may not install software (the office), the Printers row is still there");
         C.allow_install = 1;
         settings_opened(&C);
-        ok(shown("Printers") || (press("Show more") && shown("Printers")), "...and with it allowed again, the row is back");
+        ok(shown("Printers") || (press("Show more") && shown("Printers")), "...and where she may, as before");
         settings_opened(&C);
         C.settings_open = 1;
         settings_opened(&C);
