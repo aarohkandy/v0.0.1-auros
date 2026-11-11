@@ -1006,16 +1006,82 @@ int shell_launch(shell_ctx *c, int app)
     c->focus = i;
 
     if (c->spawn && c->apps[app].exec[0]) {
-        if (c->spawn(c, c->apps[app].exec, c->apps[app].n_args) < 0) {
+        int rc = c->spawn(c, c->apps[app].exec, c->apps[app].n_args);
+        if (rc < 0) {
             copy_str(w->subtitle, sizeof w->subtitle, "Could not start");
             w->starting = 0;
-        }
+        } else w->pid = rc;                  /* the process, or 0 when it is not said */
     } else if (!c->apps[app].exec[0]) {
         /* An entry with nothing behind it is the shell's own -- Settings
          * today. Saying so beats a slot that waits forever. */
         copy_str(w->subtitle, sizeof w->subtitle, c->apps[app].hint);
         w->starting = 0;
     }
+    return i;
+}
+
+/* The words for a wait. A program that has not shown a window is not a program
+ * that has failed: only "it has gone and left nothing" is said as failure. */
+#define SAY_STILL_STARTING "Still starting. This computer is taking a while."
+#define SAY_NOT_OPENING    "This is still not open. You can close this and try again."
+#define SAY_FAILED         "This did not start"
+
+static void say(win_entry *w, const char *s) { copy_str(w->subtitle, sizeof w->subtitle, s); }
+
+void shell_start_tick(shell_ctx *c, int i, uint32_t t)
+{
+    if (!c || i < 0 || i >= c->n_wins) return;
+    win_entry *e = &c->wins[i];
+    if (!e->starting || e->wid) return;
+    if (!e->start_ms) { e->start_ms = t ? t : 1; return; }
+    uint32_t waited = t - e->start_ms;
+    int st = (c->proc && e->pid > 0) ? c->proc(c, e->pid) : PROC_UNKNOWN;
+
+    if (st == PROC_FAILED) { say(e, SAY_FAILED); e->starting = 0; return; }
+    if (st == PROC_RUNNING) {
+        if (waited >= START_STUCK_MS) say(e, SAY_NOT_OPENING);
+        else if (waited >= START_SLOW_MS) say(e, SAY_STILL_STARTING);
+        return;
+    }
+    /* Gone and well, or not able to be asked: the window may still come from
+     * whatever it handed the job to. */
+    if (waited >= START_HANDOFF_MS) { say(e, SAY_FAILED); e->starting = 0; }
+    else if (waited >= START_SLOW_MS) say(e, SAY_STILL_STARTING);
+}
+
+/* A window of application `app` (-1: it reported none) has mapped, as `id`.
+ * Any slot of this application that has no window yet takes it -- one that
+ * gave up included: the program is here, and a second entry beside a card that
+ * says it did not start is the one thing worse than being late.
+ *
+ * Only a placeholder for THIS application. Adopting any pending one when the
+ * window reported no app_id -- which a toolkit may do -- gave the second of two
+ * programs started in a row the first one's name and icon, and that stuck: the
+ * first one's icon then raised the wrong window for ever and never launched
+ * again. Returns the slot, or -1 when the list is full. */
+int shell_window_arrived(shell_ctx *c, const shell_layout *L, int app, uint32_t id, uint32_t dialog_of)
+{
+    int i = -1;
+    if (app >= 0)
+        for (int j = 0; j < c->n_wins && i < 0; j++)
+            if (!c->wins[j].wid && c->wins[j].app == app) i = j;
+    if (i < 0 && c->n_wins < SHELL_MAX_WINS) {
+        i = c->n_wins++;
+        memset(&c->wins[i], 0, sizeof c->wins[i]);
+        c->wins[i].app = app;
+    }
+    if (i < 0) return -1;
+    c->wins[i].wid = id;
+    c->wins[i].starting = 0;
+    c->wins[i].pid = 0;
+    /* What the wait said ("Still starting...", "This did not start") is not true
+     * of a window: the program's own line (its hint) takes its place. */
+    c->wins[i].subtitle[0] = 0;
+    c->wins[i].dialog_of = dialog_of;
+    /* The one the user is waiting for: the archetype is asked to bring it into
+     * view rather than told which index is focused -- a carousel has to scroll,
+     * a stack has to raise, and only the archetype knows which it is. */
+    if (L && L->present) L->present(c, i); else c->focus = i;
     return i;
 }
 

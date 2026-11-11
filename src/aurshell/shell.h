@@ -109,6 +109,10 @@ typedef struct {
     uint32_t  wid;
     int       starting;
     uint32_t  start_ms;        /* when the wait began; 0 = not yet set */
+    /* The process the shell started for this slot; 0 when it was not asked
+     * or cannot say. Its own session (aurwl_spawn does setsid), so "is
+     * anything it started still running" is a question about that pid. */
+    int       pid;
 
     /* The program draws its own title bar and window buttons (Firefox,
      * GTK programs), so the archetype draws none over it: two sets of
@@ -365,6 +369,10 @@ typedef struct shell_ctx_s {
      * and test harness links -- does not drag in the compositor. NULL
      * means nothing starts, which is exactly right for a still render. */
     int (*spawn)(struct shell_ctx_s *c, const char *argv_blob, int n_args);
+    /* What became of a process spawn() started (the pid it returned), as one
+     * of PROC_*. NULL where nothing is really started (every test and preview
+     * that does not run a compositor): the answer is then PROC_UNKNOWN. */
+    int (*proc)(struct shell_ctx_s *c, int pid);
 
     /* ── per-layout scratch. Layouts own this; nothing else reads. */
     void *priv;
@@ -583,6 +591,37 @@ void shell_close_win(shell_ctx *c, int win);
 /* A real window's program has gone: take it out of c->wins, tell the
  * archetype, and leave c->focus on what is in front now (-1: Home). */
 void shell_win_gone(shell_ctx *c, const shell_layout *L, int win);
+
+/* ── a program that is starting ─────────────────────────────────── */
+/* What a launched program is doing, as shell_ctx.proc reports it. */
+enum { PROC_UNKNOWN = 0,     /* cannot say: judged by the clock alone               */
+       PROC_RUNNING,         /* it, or something it started, is still running       */
+       PROC_HANDED_OFF,      /* it has gone, successfully: a launcher that passes
+                              * the job on (the window may come from another one)   */
+       PROC_FAILED };        /* it has gone, and said it failed or was killed       */
+/* How long she waits before she is told it is slow, how long a launcher that
+ * has handed off may take to show a window, and how long a program that is
+ * running may go without one before she is told it is stuck. Why these
+ * numbers: session.c's old limit of 25 s ended a wait that measured 100 to
+ * 180 s on a machine without a graphics chip's help or a quick disk (Firefox,
+ * LibreOffice and GNOME Software, in a VM with no acceleration), which is
+ * what the oldest PCs this is for are. A launcher that has handed off has
+ * nothing left to watch, so the clock is all there is: five minutes is well
+ * past the slowest seen. A program that is still running is never called a
+ * failure; after ten minutes without a window she is only told it is not
+ * opening and may close it. */
+#define START_SLOW_MS     25000u
+#define START_HANDOFF_MS 300000u
+#define START_STUCK_MS   600000u
+/* Called each frame for slot `i`, a placeholder waiting for its window: says
+ * what is true about the wait (subtitle), and gives up only when the program
+ * has gone without one. A slot that gave up still takes its window if one
+ * comes (shell_adopt_slot). */
+void shell_start_tick(shell_ctx *c, int i, uint32_t now_ms);
+/* A window of application `app` mapped as `id`: it takes the window-less slot
+ * that application has (however long it waited), or a new one; returns the slot
+ * (-1: the list is full). The one place a window and a slot meet. */
+int  shell_window_arrived(shell_ctx *c, const shell_layout *L, int app, uint32_t id, uint32_t dialog_of);
 
 /* Registry. Each layout lives in its own translation unit and exposes
  * exactly one of these, so six of them can be written independently

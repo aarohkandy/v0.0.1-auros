@@ -54,6 +54,8 @@ void session_paint_cursor(shell_ctx *c, surface *fb);
 void session_paint_popups(shell_ctx *c, surface *fb);
 
 /* Assign to shell_ctx.spawn. */
-int  session_spawn(shell_ctx *c, const char *argv_blob, int n_args);
+int  session_spawn(shell_ctx *c, const char *argv_blob, int n_args);   /* the pid, or -1 */
+/* Assign to shell_ctx.proc. */
+int  session_proc(shell_ctx *c, int pid);
 
 #endif

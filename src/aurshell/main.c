@@ -869,7 +869,7 @@ int main(int argc, char **argv)
             if (!c.wl) { fprintf(stderr, "aurshell: no compositor\n");
                          free_fonts(&f); return 1; }
             aurwl_set_text_scale(c.wl, c.text_scale);        /* X programs get her size (Xft.dpi), as on the real desktop */
-            c.spawn = session_spawn;
+            c.spawn = session_spawn; c.proc = session_proc;
             fprintf(stderr, "aurshell: WAYLAND_DISPLAY=%s, starting %s\n",
                     aurwl_socket(c.wl), with_app);
             /* A development harness runs whatever command the person at the
@@ -1143,7 +1143,7 @@ int main(int argc, char **argv)
     c.wl = aurwl_create(disp->width, c.screen_h, disp->refresh_mhz);    /* the screen the windows have: not the band */
     if (c.wl) aurwl_set_text_scale(c.wl, c.text_scale);             /* X programs get her size (Xft.dpi) when X starts (W32) */
     if (c.wl) {
-        c.spawn = session_spawn;
+        c.spawn = session_spawn; c.proc = session_proc;
         fprintf(stderr, "aurshell: applications may connect on WAYLAND_DISPLAY=%s\n",
                 aurwl_socket(c.wl));
     } else {
