@@ -147,17 +147,15 @@ typedef struct {
      * without a name to ask for, the staging environment installs
      * whichever it reaches first.
      *
-     * Two corrections to what this comment said when it was written,
-     * because both were repeated into five files. A stick AurBridge
-     * makes holds exactly ONE image: phase 2 rewrites the whole GPT
-     * with three partitions, so re-making a stick replaces the image
-     * rather than adding one. And the wizard has no profile picker
-     * yet -- src/aurbridge/wizard.c writes the constant "desktop" and
-     * says so -- so on a shipped build this compares a constant with
-     * itself. What the person picks today is the shell archetype,
-     * which travels separately. This is the wire ready for the
-     * picker, and the refusal is real the moment there is more than
-     * one image within reach.
+     * A stick AurBridge makes holds exactly ONE image: phase 2 rewrites
+     * the whole GPT with three partitions, so re-making a stick replaces
+     * the image rather than adding one. And the wizard has no profile
+     * picker: the profile is fixed when the installer is BUILT
+     * (build/aurbridge bakes profiles/<name>.profile in; the wizard
+     * writes that name, src/aurbridge/recipe.c). One AurOS-Setup.exe is
+     * one OS. The refusal below is what keeps it honest: the journal
+     * carries the installer's profile, the image's manifest carries the
+     * image's, and a mismatch installs nothing.
      *
      * An older journal has no profile, the field is empty, and the
      * check does not happen: the same behaviour as before, for a

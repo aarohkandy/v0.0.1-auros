@@ -15,6 +15,7 @@
 #include "plan.h"
 #include "bootargs.h"
 #include "recipe.h"
+#include "profile_image.h"
 
 #define MIB (1024ull * 1024)
 
@@ -485,7 +486,10 @@ static int find_stick(const ab_choice *c, ab_machine *m, char *why, size_t n)
 static int profile_ok(const char *p, char *why, size_t n)
 {
     size_t len = p ? strlen(p) : 0;
-    if (len == 0 || len > 63) {
+    /* The same pattern the image's file name is built from
+     * (profile_image.c): a profile this engine would write into the journal
+     * is one the staging side can find an image for. */
+    if (!ab_profile_name_ok(p) || len == 0 || len > 63) {
         snprintf(why, n, "the version of AurOS to install was not named "
                          "in a way the installer can record.");
         return -1;

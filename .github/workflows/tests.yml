@@ -558,6 +558,9 @@ jobs:
       - name: termstest (the Terms she agreed to are in the install journal, and only then)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/termstest.sh 2>&1 | tee transcripts/termstest.txt
+      - name: profileinstalltest (an installer built for a profile installs that profile, and staging refuses any other)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/profileinstalltest.sh 2>&1 | tee transcripts/profileinstalltest.txt
       - name: handoverlinuxtest (her files, in a file in AurOS's root, at the disk address AurOS gives)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |

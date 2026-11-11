@@ -25,6 +25,10 @@ from src.customize.recipe import (  # noqa: E402
 # A profile belongs here only after its image and its profile-specific journey
 # have passed the public delivery gates. Recipe validation supports all five
 # reusable bases; packaging is deliberately stricter than validation.
+# This gates PERSONALIZED installers (a recipe: someone's own look and theme,
+# pinned by a recipe id). It does not decide which profile an installer
+# installs: that is fixed at build time by tools/customize/installer_profile.py
+# and build/make-os, for any profiles/<name>.profile.
 DELIVERABLE_BASES = frozenset({"desktop"})
 
 

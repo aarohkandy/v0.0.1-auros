@@ -111,6 +111,7 @@ class InstallerRecipeTests(unittest.TestCase):
                     "-I",
                     str(ROOT / "src/aurbridge"),
                     str(ROOT / "src/aurbridge/recipe.c"),
+                    str(ROOT / "src/aurbridge/profile_image.c"),
                     str(harness),
                     "-o",
                     str(binary),
@@ -243,6 +244,7 @@ int main(void) {
             for source, extra in (
                 (ROOT / "src/aurbridge/phases.c", ["-DAUROS_CHOICE_TEST"]),
                 (ROOT / "src/aurbridge/recipe.c", []),
+                (ROOT / "src/aurbridge/profile_image.c", []),
                 (harness, []),
             ):
                 obj = temporary / (source.stem + ".o")
