@@ -93,5 +93,8 @@ int  settings_page(void);
 int settings_theme_current(char *out, size_t n);
 int settings_theme_validate(const char *id);
 int settings_theme_apply(shell_ctx *c, const char *id);
+/* How long the main loop may sleep while a colour change chosen on the Colors page is still being made:
+ * a short wait, or -1 when nothing is running. */
+int settings_wait_ms(void);
 
 #endif

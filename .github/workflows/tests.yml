@@ -396,6 +396,9 @@ jobs:
       - name: renametest (build/forge's own rename loop - Internet, Your files, Get more programs and the rest - on stand-in desktop files)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/renametest.sh 2>&1 | tee transcripts/renametest.txt
+      - name: printerpolicytest (build/forge's printer block - she may set up a printer whatever the profile says about installing software)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/printerpolicytest.sh 2>&1 | tee transcripts/printerpolicytest.txt
       - name: contrast-test (the shell's palette in Light and Dark - text, rules and the words on the accent at 4.5:1 - and the other three themes' meaning pairs)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/contrast-test.sh 2>&1 | tee transcripts/contrast-test.txt

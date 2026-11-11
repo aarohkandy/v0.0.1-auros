@@ -180,6 +180,12 @@ static struct {
     char   said[CHOICE_LEN * 2]; /* one line of "this is now done"  */
     uint32_t reload_at;        /* when to reread, 0 for "not waiting" */
 
+    /* A colour change in flight: aurora is running and has not been killed. */
+    pid_t    theme_pid;        /* > 0 while it runs                        */
+    int      theme_ch;         /* the row that was pressed                 */
+    char     theme_id[48];     /* the theme it is making                   */
+    uint32_t theme_t0;         /* when it started, in ms                   */
+
     /* Put Windows back. `converted` is read when the panel opens;
      * `armed` is the first of the two presses; `asked` means the word
      * has gone to the root side and this panel is waiting to hear. */
@@ -234,12 +240,20 @@ static int field_of(const char *path, const char *key, char *out, size_t n)
     char line[512];
     size_t klen = strlen(key);
     while (fgets(line, sizeof line, f)) {
-        if (strncmp(line, key, klen) || line[klen] != '=') continue;
-        char *v = line + klen + 1;
-        if (*v == '"') v++;
-        char *end = v + strlen(v);
-        while (end > v && (end[-1] == '\n' || end[-1] == '\r' ||
-                           end[-1] == '"')) *--end = 0;
+        /* KEY= at the start of a line OR after a space: a theme may put several keys on one
+         * line (slate.theme: `muted="#76828F"   subtle="#9BA7B4"   fg="#D5DCE4"`), and
+         * reading only the first meant it had no picture on the Colors page. */
+        char *k = NULL;
+        if (line[strspn(line, " \t")] == '#') continue;
+        for (char *q = line; *q; q++)
+            if ((q == line || q[-1] == ' ' || q[-1] == '\t') &&
+                !strncmp(q, key, klen) && q[klen] == '=') { k = q; break; }
+        if (!k) continue;
+        char *v = k + klen + 1;
+        char *end;
+        if (*v == '"') { v++; end = strchr(v, '"'); if (!end) end = v + strlen(v); }
+        else           { end = v + strcspn(v, " \t\r\n"); }
+        *end = 0;
         snprintf(out, n, "%s", v);
         fclose(f);
         return 0;
@@ -282,31 +296,42 @@ static int theme_id_valid(const char *id)
     return access(path, R_OK) == 0;
 }
 
+/* The theme a note file names, if it is one this machine has. */
+static int theme_note(const char *path, char *out, size_t n)
+{
+    out[0] = 0;
+    FILE *f = fopen(path, "r");
+    if (!f) return -1;
+    if (fgets(out, (int)n, f)) {
+        size_t l = strlen(out);
+        while (l && (out[l-1] == '\n' || out[l-1] == '\r' ||
+                     out[l-1] == ' ')) out[--l] = 0;
+    }
+    fclose(f);
+    if (theme_id_valid(out)) return 0;
+    out[0] = 0;
+    return -1;
+}
+
+/* What the machine was given: the theme the profile (or the installer) chose, which she
+ * cannot write. */
+static int theme_of_machine(char *out, size_t n)
+{
+    const char *p = getenv("AUROS_MACHINE_THEME");
+    return theme_note((p && *p) ? p : "/etc/auros/theme", out, n);
+}
+
 int settings_theme_current(char *out, size_t n)
 {
     if (!out || !n) return -1;
     out[0] = 0;
     const char *home = getenv("HOME");
     char path[512];
-    for (int pass = 0; pass < 2; pass++) {
-        if (pass == 0) {
-            if (!home || !*home) continue;
-            snprintf(path, sizeof path, "%s/.config/auros/theme", home);
-        } else {
-            snprintf(path, sizeof path, "%s", "/etc/auros/theme");
-        }
-        FILE *f = fopen(path, "r");
-        if (!f) continue;
-        if (fgets(out, (int)n, f)) {
-            size_t l = strlen(out);
-            while (l && (out[l-1] == '\n' || out[l-1] == '\r' ||
-                         out[l-1] == ' ')) out[--l] = 0;
-        }
-        fclose(f);
-        if (theme_id_valid(out)) return 0;
-        out[0] = 0;
+    if (home && *home) {
+        snprintf(path, sizeof path, "%s/.config/auros/theme", home);
+        if (theme_note(path, out, n) == 0) return 0;
     }
-    return -1;
+    return theme_of_machine(out, n);
 }
 
 /* Where the archetypes and themes live. Overridable for the same two
@@ -319,6 +344,20 @@ static const char *dir_of(const char *var, const char *def)
     const char *v = getenv(var);
     return (v && *v) ? v : def;
 }
+
+/* How long a colour change may take before it is given up on -- not a time she should ever meet.
+ * aurora makes every file first and moves them into place only when all are made, so stopping it
+ * at this point leaves exactly what she had; stopping it earlier is what made a half-applied look.
+ * On a computer from 2008 the wallpaper alone is seconds. */
+static uint32_t theme_ceiling_ms(void)      /* AUROS_THEME_CEILING_MS: for a harness that must reach it */
+{
+    const char *v = getenv("AUROS_THEME_CEILING_MS");
+    long n = v ? strtol(v, NULL, 10) : 0;
+    return n > 0 ? (uint32_t)n : 120000u;
+}
+#define THEME_WAIT_WORDS "Changing the colors. An older computer can take a minute."
+#define THEME_FAIL_WORDS "The colors could not be changed just now. Nothing has changed."
+#define THEME_SLOW_WORDS "That took too long, so it was stopped. Nothing has changed."
 
 static void fill_page(shell_ctx *c)
 {
@@ -415,32 +454,46 @@ static void fill_page(shell_ctx *c)
     }
 
     if (S.page == SET_PAGE_LOOK) {
-        /* Two, each a whole look she can read. The other themes ship
-         * for profiles; they are not hers to stumble into. */
-        static const char *IDS[] = { "sandstone", "nocturne", NULL };
-        char cur[CHOICE_LEN] = {0};
+        /* Two looks everybody is offered, each a whole look she can read -- and FIRST, the one
+         * this computer was given. The other themes ship for profiles; they are not hers to
+         * stumble into. But a profile's own theme (the office's Slate) is not one of the two:
+         * with only Light and Dark here, pressing either threw away the look the administrator
+         * chose, and nothing on the page could bring it back or even said what it was. So
+         * the machine's own theme, and the one she has now if it is another, are listed by
+         * name before the two, and the one in force says "Now". */
+        char cur[CHOICE_LEN] = {0}, mach[CHOICE_LEN] = {0};
         settings_theme_current(cur, sizeof cur);
-        for (int i = 0; IDS[i]; i++) {
+        theme_of_machine(mach, sizeof mach);
+        const char *ids[4] = { NULL, NULL, NULL, NULL };
+        int n_ids = 0;
+        if (mach[0] && strcmp(mach, "sandstone") && strcmp(mach, "nocturne")) ids[n_ids++] = mach;
+        if (cur[0] && strcmp(cur, "sandstone") && strcmp(cur, "nocturne") && strcmp(cur, mach))
+            ids[n_ids++] = cur;
+        ids[n_ids++] = "sandstone";
+        ids[n_ids++] = "nocturne";
+        for (int i = 0; i < n_ids; i++) {
             char path[256], name[CHOICE_LEN], note[CHOICE_LEN];
             snprintf(path, sizeof path, "%s/%s.theme",
-                     dir_of("AUROS_THEME_DIR", "/usr/share/auros/themes"), IDS[i]);
+                     dir_of("AUROS_THEME_DIR", "/usr/share/auros/themes"), ids[i]);
             if (field_of(path, "theme_name", name, sizeof name) < 0)
-                snprintf(name, sizeof name, "%s", IDS[i]);
+                snprintf(name, sizeof name, "%s", ids[i]);
             if (field_of(path, "theme_description", note, sizeof note) < 0)
                 note[0] = 0;
-            add_choice(IDS[i], name, note);
+            add_choice(ids[i], name, note);
             /* A picture of each, in its own three colours: paper, ink and the one signal. She
              * chooses by looking, not by reading "Light writing on a dark background". */
             char v[24];
             choice *pc = &S.ch[S.n_ch - 1];
-            if (S.n_ch > 0 && !strcmp(pc->id, IDS[i]) && field_of(path, "bg", v, sizeof v) == 0) {
+            if (S.n_ch > 0 && !strcmp(pc->id, ids[i]) && field_of(path, "bg", v, sizeof v) == 0) {
                 pc->pic_bg = (uint32_t)strtoul(v[0] == '#' ? v + 1 : v, NULL, 16);
                 if (field_of(path, "fg", v, sizeof v) == 0) pc->pic_fg = (uint32_t)strtoul(v[0] == '#' ? v + 1 : v, NULL, 16);
                 if (field_of(path, "accent", v, sizeof v) == 0) pc->pic_accent = (uint32_t)strtoul(v[0] == '#' ? v + 1 : v, NULL, 16);
                 pc->has_pic = 1;
             }
-            if (cur[0] && !strcmp(cur, IDS[i])) S.cur_ch = S.n_ch - 1;
+            if (cur[0] && !strcmp(cur, ids[i])) S.cur_ch = S.n_ch - 1;
         }
+        if (S.theme_pid > 0)
+            snprintf(S.said, sizeof S.said, "%s", THEME_WAIT_WORDS);
         return;
     }
 }
@@ -489,13 +542,18 @@ int settings_page(void) { return S.page; }
 /* The printer tool, which build/forge's rename calls "Printers". Its launcher is a settings
  * page as far as the program list is concerned (apps.c hides those), so this row is where she
  * finds it. Only where the tool is installed (a control that does nothing is worse than none)
- * and where nobody has limited which programs she may start. Not where she may not add things
- * to the computer either: build/forge grants the printer permission only with allow_user_install,
- * and without it the tool's Add asks for a password nobody here can give. */
+ * and where nobody has limited which programs she may start.
+ *
+ * NOT gated on allow_user_install. It was: "without it the tool's Add asks for a password
+ * nobody here can give" -- because build/forge granted the printer permission only together
+ * with installing software, as if they were one thing. They are not. An office adds cups and
+ * system-config-printer to its machines because the people at them print, and an administrator
+ * who decides what is INSTALLED has not decided that nobody may add a printer: so the printer
+ * permission follows the printer tool, not the install policy, and so does this row. */
 static const char *printer_tool(void) { return dir_of("AUROS_PRINTER_TOOL", "/usr/bin/system-config-printer"); }
 static int printers_here(const shell_ctx *c)
 {
-    if (c->kiosk || !c->allow_install || c->deny_all_apps || c->allowed_apps[0] || c->blocked_apps[0]) return 0;
+    if (c->kiosk || c->deny_all_apps || c->allowed_apps[0] || c->blocked_apps[0]) return 0;
     return c->spawn && access(printer_tool(), X_OK) == 0;
 }
 
@@ -530,6 +588,7 @@ void settings_opened(shell_ctx *c)
     S.sel = -1;
     S.drag_row = -1;
     S.hover_act = -1;
+    if (S.theme_pid <= 0) S.said[0] = 0;     /* "Now using Light." is not news the next time she opens this */
     /* Ask the machine, rather than trusting what we last set: she may
      * have used the keys on the keyboard since, or the battery may
      * have moved on. */
@@ -1168,9 +1227,9 @@ static void gtk_follow(const char *id, const char *css_dir)
     }
 }
 
-/* Unlike run_status(), a timed-out theme command must not keep running:
- * Wishes cannot say that a change worked, record Undo, and then learn that
- * aurora failed. Kill its whole session at the deadline and reap it here. */
+/* For `aurora validate`, which only reads: unlike run_status(), a timed-out command must not
+ * keep running, so its whole session is killed at the deadline and reaped here. (Applying a
+ * theme does NOT go through this -- it is never killed halfway; see theme_start.) */
 static int theme_status(const char *const argv[], int timeout_ms)
 {
     pid_t pid = fork();
@@ -1219,32 +1278,124 @@ int settings_theme_validate(const char *id)
 {
     if (!theme_id_valid(id)) return 0;
     const char *argv[] = { "aurora", "validate", id, NULL };
-    return theme_status(argv, 2500) == 0;
+    return theme_status(argv, 20000) == 0;   /* reads only; a slow computer is not an invalid theme */
 }
 
-int settings_theme_apply(shell_ctx *c, const char *id)
+/* Start `aurora set ID`, rendering into HER directory (see the long note in choose()). 0 if it
+ * could not be started; otherwise the pid, which is its own session so it can be stopped whole. */
+static pid_t theme_start(const char *id, char *dir_out, size_t dn)
 {
-    if (!c || !c->allow_theme_change || !theme_id_valid(id)) return 0;
-
     char dir[512], cache[512];
     if (user_path(dir, sizeof dir, "") < 0 ||
         user_path(cache, sizeof cache, "cache") < 0)
         return 0;
     size_t dl = strlen(dir);
     if (dl && dir[dl-1] == '/') dir[dl-1] = 0;
+    if (dir_out) snprintf(dir_out, dn, "%s", dir);
 
-    setenv("AURORA_STATE",  dir, 1);
-    setenv("AURORA_OUTDIR", dir, 1);
-    setenv("AURORA_ONLY",   "shell.conf gtk.css", 1);
-    setenv("AURORA_CACHE", cache, 1);
-    const char *argv[] = { "aurora", "set", id, NULL };
-    int rc = theme_status(argv, 2500);
-    if (rc != 0) return 0;
+    pid_t pid = fork();
+    if (pid < 0) return 0;
+    if (pid == 0) {
+        int nullfd = open("/dev/null", O_WRONLY);
+        if (nullfd >= 0) {
+            dup2(nullfd, STDOUT_FILENO);
+            dup2(nullfd, STDERR_FILENO);
+            if (nullfd > STDERR_FILENO) close(nullfd);
+        }
+        setsid();
+        /* In the child, not here: the desktop's own environment, which every program she
+         * starts inherits, must not carry aurora's. */
+        setenv("LC_ALL", "C", 1);
+        setenv("AURORA_STATE",  dir, 1);
+        setenv("AURORA_OUTDIR", dir, 1);
+        setenv("AURORA_ONLY",   "shell.conf gtk.css", 1);
+        setenv("AURORA_CACHE", cache, 1);
+        const char *argv[] = { "aurora", "set", id, NULL };
+        execvp(argv[0], (char *const *)argv);
+        _exit(127);
+    }
+    return pid;
+}
 
+/* Stop it, whole: its session gets TERM (aurora removes what it had half made on TERM), and
+ * KILL if that is not enough in three seconds. Reaped here. */
+static void theme_stop(pid_t pid)
+{
+    kill(-pid, SIGTERM);
+    for (int i = 0; i < 300; i++) {
+        if (waitpid(pid, NULL, WNOHANG) == pid) return;
+        struct timespec nap = { 0, 10 * 1000 * 1000 };
+        nanosleep(&nap, NULL);
+    }
+    kill(-pid, SIGKILL);
+    kill(pid, SIGKILL);
+    while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {}
+}
+
+/* The synchronous form, for a caller that has nowhere to wait on screen (Wishes). It waits for the
+ * answer for as long as theme_ceiling_ms() -- it used to give up at 2.5 s and kill aurora in the
+ * middle of the change. 1 only after aurora says it has applied the theme. */
+int settings_theme_apply(shell_ctx *c, const char *id)
+{
+    if (!c || !c->allow_theme_change || !theme_id_valid(id)) return 0;
+
+    char dir[512];
+    pid_t pid = theme_start(id, dir, sizeof dir);
+    if (pid <= 0) return 0;
+    uint32_t t0 = now_ms();
+    for (;;) {
+        int st = 0;
+        pid_t r = waitpid(pid, &st, WNOHANG);
+        if (r == pid) {
+            if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) return 0;
+            break;
+        }
+        if (r < 0 && errno != EINTR) return 0;
+        if ((uint32_t)(now_ms() - t0) >= theme_ceiling_ms()) { theme_stop(pid); return 0; }
+        struct timespec nap = { 0, 10 * 1000 * 1000 };
+        nanosleep(&nap, NULL);
+    }
     gtk_follow(id, dir);
     c->want_reload = 1;
     return 1;
 }
+
+/* Called every pass of the main loop while a colour change is running: finish it, truthfully. */
+static int theme_poll(shell_ctx *c)
+{
+    if (S.theme_pid <= 0) return 0;
+    int st = 0, good = 0, slow = 0;
+    pid_t r = waitpid(S.theme_pid, &st, WNOHANG);
+    if (r == 0) {
+        if ((uint32_t)(now_ms() - S.theme_t0) < theme_ceiling_ms()) return 0;
+        theme_stop(S.theme_pid);
+        slow = 1;
+    } else if (r == S.theme_pid) {
+        good = WIFEXITED(st) && WEXITSTATUS(st) == 0;
+    }
+    S.theme_pid = 0;
+
+    int here = S.page == SET_PAGE_LOOK && S.theme_ch >= 0 && S.theme_ch < S.n_ch &&
+               !strcmp(S.ch[S.theme_ch].id, S.theme_id);
+    if (good) {
+        char dir[512];
+        if (user_path(dir, sizeof dir, "") == 0) {
+            size_t dl = strlen(dir);
+            if (dl && dir[dl-1] == '/') dir[dl-1] = 0;
+            gtk_follow(S.theme_id, dir);
+        }
+        c->want_reload = 1;
+        if (here) {
+            S.cur_ch = S.theme_ch;
+            snprintf(S.said, sizeof S.said, "Now using %s.", S.ch[S.theme_ch].label);
+        }
+    } else if (here) {
+        snprintf(S.said, sizeof S.said, "%s", slow ? THEME_SLOW_WORDS : THEME_FAIL_WORDS);
+    }
+    return 1;
+}
+
+int settings_wait_ms(void) { return S.theme_pid > 0 ? 50 : -1; }
 
 static void choose(shell_ctx *c, int idx)
 {
@@ -1403,13 +1554,22 @@ static void choose(shell_ctx *c, int idx)
          * output; AURORA_ONLY renders the one file of eleven that the
          * desktop reads, because she is watching the screen while it
          * happens. */
-        if (!settings_theme_apply(c, id)) {
-            snprintf(S.said, sizeof S.said, "%s",
-                     "The look could not be changed just now.");
+        /* NOT WAITED FOR HERE. The wallpaper alone is seconds on an old computer; this used to
+         * wait 2.5 s and then kill aurora, which had by then written her new shell.conf and not
+         * yet said so -- "The look could not be changed", and the next change of how the
+         * desktop works drew it in the new colours anyway. Now aurora runs to its end while the
+         * page says what is going on, and settings_step() finishes it. */
+        if (S.theme_pid > 0) return;                 /* one at a time; the page says so */
+        if (!c->allow_theme_change || !theme_id_valid(id) ||
+            (S.theme_pid = theme_start(id, NULL, 0)) <= 0) {
+            S.theme_pid = 0;
+            snprintf(S.said, sizeof S.said, "%s", THEME_FAIL_WORDS);
             return;
         }
-        S.cur_ch = idx;
-        snprintf(S.said, sizeof S.said, "Now using %s.", S.ch[idx].label);
+        S.theme_ch = idx;
+        S.theme_t0 = now_ms();
+        snprintf(S.theme_id, sizeof S.theme_id, "%s", id);
+        snprintf(S.said, sizeof S.said, "%s", THEME_WAIT_WORDS);
         return;
     }
 }
@@ -1613,6 +1773,7 @@ static int putback_answered(shell_ctx *c)
 
 int settings_step(shell_ctx *c)
 {
+    if (theme_poll(c)) return 1;
     if (S.asked && S.page == SET_PAGE_WINDOWS && putback_answered(c)) return 1;
     if (!S.reload_at) return 0;
     if ((int32_t)(now_ms() - S.reload_at) < 0) return 0;

@@ -85,6 +85,15 @@ want org.xfce.mousepad Notes
 want xarchiver "Zip files"
 want system-config-printer Printers
 want sol Solitaire
+want libreoffice-draw Drawings
+want libreoffice-impress Presentations
+want simple-scan Scanner
+want org.keepassxc.KeePassXC Passwords
+# Her list draws a program's line only where it fits WHOLE, so a line that is too long is not drawn
+# at all: every row of the table has a line of 40 characters or fewer (the longest she reads today).
+longest=$(awk -F'|' 'NF >= 3 { if (length($3) > m) m = length($3) } END { print m + 0 }' "$T/table")
+if [ "$longest" -le 40 ] && [ "$longest" -gt 0 ]; then ok "every line in the table fits on her list (longest: $longest characters)"
+else bad "every line in the table fits on her list (longest: $longest characters)" "$(awk -F'|' 'length($3) > 40 { print $1 ": " $3 }' "$T/table")"; fi
 # a launcher to hide that is not installed hides nothing, and says so
 rm -f "$RFS/usr/share/applications/thunar-bulk-rename.desktop" "$RFS/usr/local/share/applications/thunar-bulk-rename.desktop"
 sh -c "warn() { echo WARN \"\$*\"; }; . '$T/loop.sh'" > "$T/out3" 2>&1

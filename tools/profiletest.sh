@@ -311,6 +311,12 @@ judge_report() { # profile report-file
         || bad "a browser is installed" "no firefox on PATH"
     [ -z "$(rv failed)" ] && ok "no unit failed on the way up" \
         || bad "no unit failed on the way up" "failed: $(rv failed)"
+    # `systemctl --failed` is empty for a unit that was never started because something it BINDS TO
+    # was not there: that is a failed job, "Dependency failed for X" on the console of every boot, and
+    # the unit sits "inactive (dead)". The office image shipped seven of them (sssd's sockets, with no
+    # sssd.conf) and "no unit failed" said yes to it.
+    [ -z "$(rv dep_failed)" ] && ok "no unit was refused its start on the way up" \
+        || bad "no unit was refused its start on the way up" "Dependency failed for: $(rv dep_failed)"
     if [ -n "$(pval "$p" zram_percent)" ]; then
         case "$(rv swap)" in *zram*) ok "compressed swap in memory is on" ;;
             *) bad "compressed swap in memory is on" "swap: $(rv swap)" ;; esac
@@ -1213,6 +1219,28 @@ EOR
     rep "...running as root"                  's/user=student/user=root/'
     rep "...in another theme"                 's/theme=sandstone/theme=nocturne/'
     rep "...with a unit that failed"          's/failed=$/failed=auros-firstboot.service/'
+    rep "...with a unit whose start was refused (Dependency failed)" 's/^PROFILETEST failed=$/&\nPROFILETEST dep_failed=sssd-nss.socket sssd.socket/'
+    # and the probe's own line finds them in a real console log (the office image's), and finds nothing in a clean one
+    for _case in dirty clean; do
+        if [ "$_case" = dirty ]; then
+            printf '%s\n' 'Dependency failed for sssd-nss.socket - SSSD NSS Service responder socket.' \
+                'Started aurshell.service - AurOS desktop shell.' \
+                'Dependency failed for sssd-pam.socket - SSSD PAM Service responder socket.' \
+                'Dependency failed for sssd-nss.socket - SSSD NSS Service responder socket.' > "$T/journal.sample"
+            _want="sssd-nss.socket sssd-pam.socket"
+        else
+            printf '%s\n' 'Started aurshell.service - AurOS desktop shell.' 'Reached target Multi-User System.' > "$T/journal.sample"
+            _want=""
+        fi
+        _got=$( journalctl() { cat "$T/journal.sample"; }; say() { printf '%s' "$*"; }
+                eval "$(grep '^say "dep_failed=' "$0" | head -n 1)" )
+        if [ "$_got" = "dep_failed=$_want" ]; then
+            printf '    %-62s %s\n' "...the probe's dep_failed line on a $_case console log" "reads it right"
+        else
+            printf '    %-62s %s\n' "...the probe's dep_failed line on a $_case console log" "WRONG: '$_got'"; fail=$((fail+1))
+        fi
+        checked=$((checked+1))
+    done
     rep "...with no browser"                  's/browser=.*/browser=/'
     rep "...with a console on Ctrl-Alt-F2"    's/tty2=masked/tty2=enabled/'
     rep "...with aurshell crashed"            's/aurshell=active/aurshell=failed/'
@@ -2463,6 +2491,7 @@ say "lang=$(grep '^LANG=' /etc/default/locale)"
 say "locales=$(locale -a 2>/dev/null | tr '\n' ' ')"
 say "browser=$(command -v firefox || command -v epiphany-browser || true)"
 say "failed=$(systemctl --failed --plain --no-legend 2>/dev/null | awk '{print $1}' | tr '\n' ' ' | sed 's/ $//')"
+say "dep_failed=$(journalctl -b -o cat --no-pager 2>/dev/null | sed -n 's/^Dependency failed for \([^ ]*\).*/\1/p' | sort -u | tr '\n' ' ' | sed 's/ $//')"
 say "swap=$(swapon --show=NAME,TYPE,SIZE --noheadings 2>/dev/null | tr '\n' ';')"
 say "earlyoom=$(systemctl is-active earlyoom.service 2>/dev/null)"
 say "tty2=$(systemctl is-enabled getty@tty2.service 2>/dev/null)"

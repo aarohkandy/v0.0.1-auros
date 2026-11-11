@@ -996,6 +996,14 @@ EOL
     # translations, so a French build shows "Photos" and "Your files"
     # rather than the packager's French. "Photos" is a French word.
     # "Visionneur de documents Atril" is not a name anyone uses.
+    #
+    # THE LINE IS KEPT SHORT (40 characters), because the list draws it only where it fits whole
+    # (src/aurshell/layouts/rail.c: half a sentence is worse than none) -- so a packager's
+    # "Create and edit presentations for slideshows, meetings and Web pages." or a 70-character
+    # Comment is not shortened, it is simply not there, and the row reads as a program nobody
+    # described. A program a PROFILE adds (the office's Draw, Impress, scanner and password
+    # safe) needs a row here to be named and described like the rest; tools/renametest.sh
+    # refuses a line that would not fit.
     install -d "$RFS/usr/local/share/applications"
     while IFS='|' read -r desk nm cm; do
         [ -n "$desk" ] || continue
@@ -1025,6 +1033,10 @@ org.gnome.Software|Get more programs|Find and add programs
 libreoffice-writer|Letters|Write a letter, or open a Word file
 libreoffice-calc|Spreadsheets|Numbers in tables, or open an Excel file
 sol|Solitaire|Play cards
+libreoffice-draw|Drawings|Make a drawing or a diagram
+libreoffice-impress|Presentations|Make slides, or open a PowerPoint file
+simple-scan|Scanner|Scan a page or a photo
+org.keepassxc.KeePassXC|Passwords|Keep your passwords safe (KeePassXC)
 EOL
 
     # Tools that are installed because something needs them (or because the package
@@ -2366,7 +2378,13 @@ EOL
         # go stale when the package changes either.
         print_cases=""
         cups_policy="$RFS/usr/share/polkit-1/actions/org.opensuse.cupspkhelper.mechanism.policy"
-        if [ "$allow_user_install" = "yes" ] && [ -f "$cups_policy" ]; then
+        #
+        # NOT TIED TO allow_user_install. It was, and the office profile (which decides what is
+        # installed, and installs cups and the printer tool because its people print) got no
+        # permission to add a printer and no Printers row in Settings. Setting up a printer is not
+        # installing software; it follows the printer tool being on the image, for everybody
+        # but a kiosk (this whole block).
+        if [ -f "$cups_policy" ]; then
             n_print=0
             while read -r _a; do
                 [ -n "$_a" ] || continue
@@ -2386,7 +2404,7 @@ EOP
                 warn "recognises, so adding a printer will ask for a password"
                 warn "that nothing in this product can supply."
             fi
-        elif [ "$allow_user_install" = "yes" ]; then
+        elif [ -x "$RFS/usr/bin/system-config-printer" ]; then
             warn "cups-pk-helper is not in this image, so adding a printer will"
             warn "ask for a password nothing here can supply. Only printers"
             warn "cups-browsed discovers by itself will work."
