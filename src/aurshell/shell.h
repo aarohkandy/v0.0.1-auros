@@ -477,6 +477,13 @@ float shell_text_w(font *f, const char *t);
  * Application names come from packages and are as long as they like. */
 void shell_text_elided(surface *s, font *f, float x, float y, float max_w,
                        const char *t, uint32_t col, float a);
+/* Where the block on a card that is waiting (icon, name, rule, and `lines` lines of words) starts, so that
+ * it ends inside the card's body. `top` is where it would start (the icon's centre); *isz is the icon's size
+ * and becomes 0 when there is no room for the icon -- the words come first -- and -1 when there is none for the
+ * name either (the window's own title bar has it): the words alone, from the top of the body. g1: icon centre to name
+ * top; g2: name's bottom to the first line's top. */
+float shell_card_top(font *big, font *small, float g1, float g2, float lh, int lines,
+                     float body_y, float body_h, float top, float *isz);
 /* The brand's mark and name, once per screen; returns where it ends. */
 float shell_wordmark(shell_ctx *c, surface *s, shell_fonts *f, float x, float cy);
 int  shell_text_wrap(surface *s, font *f, float x, float y, float max_w,

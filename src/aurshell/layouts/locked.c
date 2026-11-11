@@ -357,10 +357,17 @@ static void paint_placeholder(shell_ctx *c, surface *s, shell_fonts *f, rect a,
      * frame and over the buttons below. */
     float mark  = isz + 34.f;
     float words = a_n + d_n;
-    float tail  = 20.f + 18.f + a_h + d_h;
+    /* The line is wrapped to the stage ("Still starting. This computer is taking a while." is wider than
+     * a small one at the biggest words), so the standfirst may be more than one line tall. */
+    float lw = (float)a.w - (x - (float)a.x) * 2.f;
+    float lh = (a_h + d_h) * f->lh;
+    int   ln = shell_text_wrap(NULL, f->mid, 0.f, 0.f, lw, lh, line2, 0, 0.f, 3);
+    float tail  = 20.f + 18.f + a_h + d_h + (float)(ln > 1 ? ln - 1 : 0) * lh;
     int show_tail = 1, show_mark = 1;
     if (mark + words + tail > (float)a.h - 12.f) show_tail = 0;
     if (mark + words > (float)a.h - 12.f)        show_mark = 0;
+    /* A line that took more than one line is the news (it says what is happening): the mark goes first. */
+    if (ln > 1 && !show_tail && words + tail <= (float)a.h - 12.f) { show_tail = 1; show_mark = 0; }
 
     float block = (show_mark ? mark : 0.f) + words + (show_tail ? tail : 0.f);
     float top   = (float)a.y + ((float)a.h - block) * 0.42f;
@@ -375,8 +382,8 @@ static void paint_placeholder(shell_ctx *c, surface *s, shell_fonts *f, rect a,
     if (show_tail) {
         draw_hrule(s, (int)x, (int)(ny + d_n + 20.f),
                    (int)((float)a.w * 0.18f), 2, c->fg_hi, alpha * 0.85f);
-        shell_text(s, f->mid, x, ny + d_n + 20.f + 18.f + a_h, line2,
-                   c->subtle, alpha * 0.88f);
+        shell_text_wrap(s, f->mid, x, ny + d_n + 20.f + 18.f + a_h, lw, lh, line2,
+                        c->subtle, alpha * 0.88f, 3);
     }
 }
 

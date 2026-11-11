@@ -640,6 +640,23 @@ static int wrap_impl(surface *s, font *f, float x, float y, float max_w,
     return used;
 }
 
+float shell_card_top(font *big, font *small, float g1, float g2, float lh, int lines,
+                     float body_y, float body_h, float top, float *isz)
+{
+    float ab = big ? font_ascent(big) : 26.f, db = big ? font_descent(big) : 8.f;
+    float as = small ? font_ascent(small) : 11.f, ds = small ? font_descent(small) : 4.f;
+    float rest = g1 + ab + db + (lines > 0 ? g2 + as + (float)(lines - 1) * lh + ds : 0.f);
+    float limit = body_y + body_h - 8.f;
+    if (top + *isz * 0.5f + rest <= limit) return top;
+    float t = limit - *isz * 0.5f - rest;
+    if (t - *isz * 0.5f >= body_y + 4.f) return t;
+    *isz = 0.f;
+    t = limit - rest;
+    float lo = body_y + 4.f - g1;
+    if (t < lo) *isz = -1.f;            /* not even the name and the words fit: the words alone */
+    return t < lo ? lo : t;
+}
+
 int shell_text_wrap(surface *s, font *f, float x, float y, float max_w,
                     float lh, const char *t, uint32_t col, float a, int max_lines)
 {
