@@ -5856,7 +5856,7 @@ static int nav_test(const char *dir)
     nt_fake_report(0);
     g_check_next = PAGE_PROGRESS;
     blocked_cleared();
-    nt_check(g_page == PAGE_WELCOME && !g_install_running && g_check_next == PAGE_STYLE,
+    nt_check(g_page == PAGE_WELCOME && !g_install_running && g_check_next == after_check(),
              "a stop that clears by itself goes back to the first page, never into the install");
 
     if (g_nt) fprintf(g_nt, "\n3. preflight clean: one press per page, nothing typed\n");
@@ -5865,18 +5865,22 @@ static int nav_test(const char *dir)
     nt_check(primary_enabled() && !wcscmp(primary_label(), L"Next"),
              "the first page offers Next once the check is clean");
     on_key(VK_RETURN);
-    nt_check(g_page == PAGE_STYLE, "Enter presses Next: the look page");
-    nt_check(primary_enabled() && !wcscmp(primary_label(), L"Next"),
-             "a look is already chosen, so Next works straight away");
-    on_key(VK_SPACE);
+    nt_check(g_page == after_check(),
+             look_offered() ? "Enter presses Next: the look page"
+                            : "Enter presses Next: this profile has no look page, so Ready");
+    if (look_offered()) {
+        nt_check(primary_enabled() && !wcscmp(primary_label(), L"Next"),
+                 "a look is already chosen, so Next works straight away");
+        on_key(VK_SPACE);
+    }
     nt_check(g_page == PAGE_READY, "Space presses Next too: the Ready page");
     nt_check(primary_enabled() && !wcscmp(primary_label(), L"Install AurOS"),
              "Ready's one button is Install AurOS, with nothing to tick or type first");
     nt_check(nav_allowed(PAGE_PROGRESS), "the install is reachable from Ready as it stands");
-    g_page = PAGE_STYLE;                   /* she went Back while it checked */
+    g_page = look_offered() ? PAGE_STYLE : PAGE_WELCOME;   /* she went Back while it checked */
     g_check_next = PAGE_PROGRESS;
     check_advance();
-    nt_check(g_page == PAGE_STYLE && !g_install_running,
+    nt_check(g_page == (look_offered() ? PAGE_STYLE : PAGE_WELCOME) && !g_install_running,
              "a clean re-check after she went Back starts nothing");
     g_page = PAGE_READY;
     g_check_next = PAGE_PROGRESS;
@@ -5885,7 +5889,7 @@ static int nav_test(const char *dir)
     g_page = PAGE_WELCOME;
 
     if (g_nt) fprintf(g_nt, "\n3b. one press is one press: a double-click never skips Ready\n");
-    {
+    if (look_offered()) {                  /* the look page is what is double-clicked past */
         nt_fake_report(0);
         g_check_next = PAGE_STYLE;
         g_nt_auto = 0;
@@ -6079,9 +6083,16 @@ static int nav_test(const char *dir)
             char what[160];
             snprintf(what, sizeof what, "card %d (%s, %s) travels as shell=%s theme=%s",
                      i, STYLES[i].shell, STYLES[i].theme, c.shell_archetype, c.theme);
-            int one = g_sel_style == i && c.shell_archetype[0] && c.theme[0] &&
-                      !strcmp(c.shell_archetype, STYLES[i].shell) &&
-                      !strcmp(c.theme, STYLES[i].theme);
+            /* The profile's rule (recipe.c): where the image decides its own
+             * look nothing travels; otherwise her card, with the profile's
+             * own theme when it names one. */
+            const char *want_theme = ab_profile_theme()[0] ? ab_profile_theme() : STYLES[i].theme;
+            int one = g_sel_style == i &&
+                      (look_offered()
+                       ? c.shell_archetype[0] && c.theme[0] &&
+                         !strcmp(c.shell_archetype, STYLES[i].shell) &&
+                         !strcmp(c.theme, want_theme)
+                       : !c.shell_archetype[0] && !c.theme[0]);
             nt_check(one, what);
             ok &= one;
         }
@@ -6093,6 +6104,31 @@ static int nav_test(const char *dir)
         nt_check(g_sel_style == 0, "and stop at the first one");
         g_sel_style = STYLE_DEFAULT;
         (void)ok;
+    }
+
+    if (g_nt) fprintf(g_nt, "\n5b. the profile this installer was built for: %s\n", ab_recipe_image_profile());
+    {
+        ab_choice c;
+        char want[48];
+        nt_fake_report(0);
+        choice_image_source(&c);
+        nt_check(ab_recipe_status() != AB_RECIPE_INVALID && c.profile[0] &&
+                 !strcmp(c.profile, ab_recipe_image_profile()) &&
+                 ab_profile_image_name(c.profile, want, sizeof want) == 0 &&
+                 strstr(c.image_path, want),
+                 "the journal's profile, and the image it looks for, are the profile it was built for");
+        nt_check(rail_n() == N_RAIL - (look_offered() ? 0 : 1),
+                 "the steps are counted without a look step where there is no look page");
+        nt_check(nav_allowed(PAGE_STYLE) == (look_offered() != 0),
+                 "the look page exists only where the image honours the look");
+        g_page = PAGE_READY;
+        nt_check(back_target() == (look_offered() ? PAGE_STYLE : PAGE_WELCOME),
+                 "Back from Ready goes to the look page, or to the first page where there is none");
+        wchar_t nm[1400];
+        acc_page_name(nm, 1400);
+        nt_check(look_offered() ? wcsstr(nm, L"It will ") != NULL : wcsstr(nm, L"It will ") == NULL,
+                 "Ready describes a look only where the person chose one");
+        g_page = PAGE_WELCOME;
     }
     {
         detect_defaults();
@@ -6279,8 +6315,9 @@ static int nav_test(const char *dir)
     {
         nt_fake_report(0);
         g_page = PAGE_READY;   on_key(VK_ESCAPE);
-        nt_check(g_page == PAGE_STYLE, "Esc on Ready goes back to the looks");
-        on_key(VK_ESCAPE);
+        nt_check(g_page == (look_offered() ? PAGE_STYLE : PAGE_WELCOME),
+                 "Esc on Ready goes back to the looks (the first page where there is no look page)");
+        if (look_offered()) on_key(VK_ESCAPE);
         nt_check(g_page == PAGE_WELCOME, "Esc on the looks goes back to the first page");
         on_key(VK_ESCAPE);
         nt_check(g_page == PAGE_WELCOME, "Esc on the first page does nothing");
@@ -6649,7 +6686,7 @@ static int nav_test(const char *dir)
         fx_hw(FXH_BCM_ETH);
         const wchar_t *ln[2]; static wchar_t bf[2][330];
         int notes = hw_internet_notes(ln, 2, bf);
-        nt_check(g_report.n_block == 0 && pf_is_go(&g_report) && nav_allowed(PAGE_STYLE),
+        nt_check(g_report.n_block == 0 && pf_is_go(&g_report) && nav_allowed(after_check()),
                  "the same card with a cable socket does not stop her");
         nt_check(notes == 1 && wcsstr(ln[0], L"network cable will"),
                  "... it is one line under Good to know on the first page");
@@ -6832,7 +6869,7 @@ static int nav_test(const char *dir)
         g_page = PAGE_WELCOME;
         /* a page that moves on closes the pane (the check can finish behind it) */
         widget_activate(ID_LICENSES);
-        goto_page(PAGE_STYLE);
+        goto_page(after_check());
         nt_check(g_pane == 0, "a page that changes closes it");
         g_page = PAGE_WELCOME;
     }

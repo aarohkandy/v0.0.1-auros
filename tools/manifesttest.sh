@@ -73,6 +73,10 @@ if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
     cp -r build "$TMP/tree/"
     cp -r src/aurbridge "$TMP/tree/src/"
     cp tools/pe_payload.py tools/repo.sh "$TMP/tree/tools/"
+    # the profile the installer is built for (build/aurbridge reads these)
+    mkdir -p "$TMP/tree/tools/customize"
+    cp tools/customize/installer_profile.py "$TMP/tree/tools/customize/"
+    cp -r profiles themes shells "$TMP/tree/"
     # the licences and the Terms the installer carries (build/aurbridge embeds them)
     mkdir -p "$TMP/tree/docs/legal"
     cp -r docs/legal/notices "$TMP/tree/docs/legal/"
