@@ -245,11 +245,20 @@ echo "the built image ($RFS)"
 miss=""; for d in Desktop Documents Downloads Music Pictures Videos; do [ -d "$RFS/etc/skel/$d" ] || miss="$miss $d"; done
 [ -z "$miss" ] && ok "/etc/skel has her folders (a new account starts with them)" || bad "/etc/skel is missing:$miss"
 DU=$(sed -n 's/^default_user[[:space:]]*=[[:space:]]*"\{0,1\}\([A-Za-z0-9_-]*\).*/\1/p' "$PROFILE" | head -1)
-if [ -n "$DU" ] && [ -d "$RFS/home/$DU" ]; then
-    miss=""; for d in Desktop Documents Downloads Music Pictures Videos; do [ -d "$RFS/home/$DU/$d" ] || miss="$miss $d"; done
-    [ -z "$miss" ] && ok "$DU's home has her folders" || bad "$DU's home is missing:$miss"
-    owner=$(stat -c %U "$RFS/home/$DU/Documents" 2>/dev/null)
-    [ "$owner" = "$DU" ] && ok "...and they are hers" || bad "$DU's Documents belongs to '$owner'"
+# Her home is hers alone (0750), so a test that is not root asks through sudo where it can
+# (CI's runner can); "cannot look" is said, never taken for "missing" (build run 43110762727).
+asroot() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@" 2>/dev/null; fi; }
+if [ -n "$DU" ] && asroot test -d "$RFS/home/$DU"; then
+    if asroot test -r "$RFS/home/$DU"; then
+        miss=""; for d in Desktop Documents Downloads Music Pictures Videos; do asroot test -d "$RFS/home/$DU/$d" || miss="$miss $d"; done
+        [ -z "$miss" ] && ok "$DU's home has her folders" || bad "$DU's home is missing:$miss"
+        owner=$(asroot stat -c %u "$RFS/home/$DU/Documents" 2>/dev/null)
+        home_owner=$(asroot stat -c %u "$RFS/home/$DU" 2>/dev/null)
+        [ -n "$owner" ] && [ "$owner" = "$home_owner" ] && [ "$owner" != 0 ] \
+            && ok "...and they are hers" || bad "$DU's Documents belongs to uid '$owner', her home to '$home_owner'"
+    else
+        bad "cannot look inside $DU's home in the image (not root, and no sudo)"
+    fi
 fi
 [ -x "$RFS/usr/lib/auros/home-folders" ] && ok "the image carries home-folders" || bad "the image has no executable home-folders"
 

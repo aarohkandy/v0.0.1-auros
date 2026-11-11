@@ -51,7 +51,8 @@ E=tools/efivarstore.py
 CODE=/usr/share/OVMF/OVMF_CODE_4M.ms.fd
 VARS=/usr/share/OVMF/OVMF_VARS_4M.ms.fd
 BOOT_TIMEOUT="${ROLLBACK_TIMEOUT:-420}"
-GOOD=6.8.0-147-generic
+GOOD=""   # the image's own kernel, read once its root is mounted (it was pinned
+          # to 6.8.0-147 until Ubuntu moved on: build run 43110762727)
 BAD=6.8.0-999-generic
 NEW=6.8.0-1000-generic
 MUTANT="${ROLLBACKTEST_MUTANT:-}"
@@ -112,6 +113,7 @@ gcc -static -O1 -o "$T/ir/init" "$T/dead.c" 2>/dev/null || { echo "  could not b
 
 mount_root || exit 2
 R="$T/m"
+GOOD=$(build/kernel-version "$R") || { echo "  the image has no kernel to fall back to"; exit 2; }
 [ -x "$R/usr/lib/auros/boot-ok" ] && ok "the image carries auros-boot-ok" || bad "the image carries auros-boot-ok"
 [ -L "$R/etc/systemd/system/multi-user.target.wants/auros-boot-ok.service" ] \
   && ok "...and it is switched on" || bad "...and it is switched on"
@@ -230,8 +232,8 @@ P=$(panics)
 [ "$P" = 2 ] && ok "it panicked twice, and was restarted each time by panic=10" \
              || bad "it panicked twice, and was restarted each time by panic=10" "panics=$P" "$(tail -3 "$SER.txt")"
 echo "$L" | grep -q "^run1 start1 up .*kernel=$GOOD running=$GOOD" \
-  && ok "the third start was the kernel before it (6.8.0-147)" \
-  || bad "the third start was the kernel before it (6.8.0-147)" "$L"
+  && ok "the third start was the kernel before it (${GOOD%-generic})" \
+  || bad "the third start was the kernel before it (${GOOD%-generic})" "$L"
 echo "$L" | grep -q "^run1 start1 desktop after" && ok "...and the desktop came up" \
   || bad "...and the desktop came up" "$L"
 echo "$L" | grep -q "^run1 start1 confirmed after" && ok "...and that start was confirmed" \
