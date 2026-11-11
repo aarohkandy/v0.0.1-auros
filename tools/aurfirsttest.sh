@@ -1167,6 +1167,9 @@ if gcc -shared -fPIC -o "$TMP/dropw.so" "$TMP/dropw.c" -ldl 2>"$TMP/dropw.log"; 
     [ "$(read_order)" = "0002 0000" ] \
       && ok "...and the order is left as the firmware kept it" \
       || bad "...and the order is left as the firmware kept it" "$(read_order)"
+    grep -q "put back as it was" "$TMP/dec.out" \
+      && ok "...and, because it IS as it was, it says it was put back" \
+      || bad "...and, because it IS as it was, it says it was put back" "$(cat "$TMP/dec.out")"
     fresh
     plant 0000 "Windows Boot Manager"
     plant 0002 "AurOS"
@@ -1178,6 +1181,107 @@ if gcc -shared -fPIC -o "$TMP/dropw.so" "$TMP/dropw.c" -ldl 2>"$TMP/dropw.log"; 
 else
     bad "the stand-in firmware did not build" "$(sed -n 1,5p "$TMP/dropw.log")"
 fi
+
+# ── a firmware that loses the order and does not take it back either ──
+# The write empties BootOrder (af_var_put opens with O_TRUNC) and is thrown
+# away; the restore meets the same firmware. Reading BootOrder again is the
+# only way to know, and "it has been put back" is only said when that read
+# agrees. AF_FW=lost: the write is dropped, every time. AF_FW=full: the put
+# itself fails, every time. AF_FW=once: the put fails once and the restore
+# takes.
+echo
+echo "  a firmware that loses the start-up order and does not take it back"
+cat > "$TMP/lostw.c" <<'EOC'
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <stdarg.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+int open(const char *p, int fl, ...)
+{
+    static int (*real)(const char *, int, ...);
+    static int writes;
+    if (!real) real = (int (*)(const char *, int, ...))dlsym(RTLD_NEXT, "open");
+    mode_t m = 0;
+    if (fl & O_CREAT) { va_list a; va_start(a, fl); m = va_arg(a, mode_t); va_end(a); }
+    const char *fw = getenv("AF_FW");
+    if (fw && strstr(p, "BootOrder-") && (fl & O_WRONLY) &&
+        (strcmp(fw, "once") || writes++ == 0)) {
+        int t = real(p, fl, m);            /* the truncation the real put does */
+        if (t >= 0) close(t);
+        return real(strcmp(fw, "lost") ? "/dev/full" : "/dev/null", O_WRONLY);
+    }
+    return real(p, fl, m);
+}
+EOC
+if gcc -shared -fPIC -o "$TMP/lostw.so" "$TMP/lostw.c" -ldl 2>"$TMP/lostw.log"; then
+    HONEST="could not put the old one back"
+    MENU="hold the key your computer shows at start-up for a boot menu and choose Windows or AurOS"
+    stand() { fresh; plant 0000 "Windows Boot Manager"; plant 0002 "AurOS"; order "$@"; }
+    honest_words() { # label out-file
+        if grep -q "$HONEST" "$2" && grep -q "$MENU" "$2" && ! grep -q "put back as it was" "$2"; then
+            ok "$1: it says it could not put it back, and what to do"
+        else
+            bad "$1: it says it could not put it back, and what to do" "$(cat "$2")"
+        fi
+    }
+
+    stand 0002 0000
+    AF_FW=lost LD_PRELOAD="$TMP/lostw.so" "$AF" decline >"$TMP/dec2.out" 2>&1; rc=$?
+    [ "$rc" != 0 ] && [ ! -f "$SD/converted.declined" ] \
+      && ok "No, with a start-up order that was lost: a refusal, nothing stamped" \
+      || bad "No, with a start-up order that was lost: a refusal, nothing stamped" \
+             "rc=$rc declined=$([ -f "$SD/converted.declined" ] && echo yes || echo no)"
+    honest_words "No" "$TMP/dec2.out"
+    [ "$(read_order)" != "0002 0000" ] \
+      && ok "...and the order really is not what it was (the test's firmware lost it)" \
+      || bad "...and the order really is not what it was (the test's firmware lost it)" "$(read_order)"
+
+    stand 0000 0002
+    AF_FW=lost LD_PRELOAD="$TMP/lostw.so" "$AF" confirm >"$TMP/con2.out" 2>&1; rc=$?
+    [ "$rc" != 0 ] && [ ! -f "$SD/converted.confirmed" ] \
+      && ok "Yes, with a start-up order that was lost: a refusal, nothing stamped" \
+      || bad "Yes, with a start-up order that was lost: a refusal, nothing stamped" \
+             "rc=$rc confirmed=$([ -f "$SD/converted.confirmed" ] && echo yes || echo no)"
+    honest_words "Yes" "$TMP/con2.out"
+
+    # A put that FAILS leaves BootOrder as the truncation left it, and the
+    # restore must be looked at all the same.
+    stand 0002 0000
+    AF_FW=full LD_PRELOAD="$TMP/lostw.so" "$AF" decline >"$TMP/dec3.out" 2>&1; rc=$?
+    [ "$rc" != 0 ] && [ ! -f "$SD/converted.declined" ] \
+      && ok "a write that fails, and a restore that fails: refused, nothing stamped" \
+      || bad "a write that fails, and a restore that fails: refused, nothing stamped" "rc=$rc"
+    honest_words "a failed write" "$TMP/dec3.out"
+
+    stand 0002 0000
+    AF_FW=once LD_PRELOAD="$TMP/lostw.so" "$AF" decline >"$TMP/dec4.out" 2>&1; rc=$?
+    [ "$rc" != 0 ] && [ ! -f "$SD/converted.declined" ] && [ "$(read_order)" = "0002 0000" ] \
+      && ok "a write that fails and a restore that takes: refused, order as it was" \
+      || bad "a write that fails and a restore that takes: refused, order as it was" \
+             "rc=$rc order=$(read_order) $(cat "$TMP/dec4.out")"
+    ! grep -q "could not put the old one back" "$TMP/dec4.out" \
+      && ok "...and it does not claim it lost the order" \
+      || bad "...and it does not claim it lost the order" "$(cat "$TMP/dec4.out")"
+else
+    bad "the losing stand-in firmware did not build" "$(sed -n 1,5p "$TMP/lostw.log")"
+fi
+
+# ── a start-up menu one entry too long to rewrite whole ─────────────────
+# 512 numbers and ours not among them: ours first would be 513. Dropping the
+# last number to fit would be dropping somebody's operating system, so it is
+# left alone, and nothing is stamped.
+echo
+echo "  a start-up menu that is full"
+fresh; plant 0000 "Windows Boot Manager"; plant 0002 "AurOS"
+order $(python3 -c "print(' '.join('%04X' % n for n in range(0x100, 0x300)))")
+before=$(read_order)
+"$AF" confirm >"$TMP/full.out" 2>&1; rc=$?
+[ "$rc" != 0 ] && [ ! -f "$SD/converted.confirmed" ] && [ "$(read_order)" = "$before" ] \
+  && ok "a full menu is left alone, and nothing is stamped" \
+  || bad "a full menu is left alone, and nothing is stamped" "rc=$rc $(cat "$TMP/full.out")"
 
 echo
 if [ "$fail" -gt 0 ]; then
