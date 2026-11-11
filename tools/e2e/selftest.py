@@ -18,6 +18,10 @@
    the newest e2e-* release as r<run>-*; none at all), with a fake gh.
 5. The installed first-session producer's positive, negative and bounded-retry
    records, plus its systemd and forge wiring (first-session-probetest.sh).
+6. The journey for a profile (E2E_PROFILE, build/make-os's installers): what it
+   expects and which steps it skips come from the profile's own fields
+   (profileplan.py); with no profile nothing changes; e2e.yml hands the
+   profile down and refuses odd values.
 
 Run from anywhere: python3 tools/e2e/selftest.py
 """
@@ -1157,6 +1161,230 @@ def test_generic_default_verdicts():
           "generic defaults: a personalized receipt with the same look and theme is RED")
 
 
+def test_profile_journey():
+    """E2E_PROFILE: the journey for the installer build/make-os makes for a profile."""
+    try:
+        import e2e
+    except ImportError:
+        return
+    import profileplan
+    check(e2e.PROFILE == "", "profile: with no E2E_PROFILE the journey is the desktop release's (PROFILE is empty)")
+
+    def plan(name):
+        return profileplan.load(name)
+
+    # the shipped profiles, read from the files themselves
+    d, o, k, r, m = (plan(n) for n in ("desktop", "office", "school-kiosk", "revive", "multilingual"))
+    check((d.look, d.theme, d.look_offered) == ("taskbar", "sandstone", True),
+          "profile: desktop starts on the wizard's own Like Windows / Light, as this journey always expected")
+    check((o.look, o.theme, o.look_offered) == ("rail", "slate", True),
+          "profile: office starts on its own look and theme (rail, slate)")
+    check((k.look, k.theme, k.look_offered) == ("locked", "sandstone", False),
+          "profile: a kiosk is offered no look page; the image's own (locked, sandstone) is expected")
+    check(d.store_reason() is None and d.flathub_reason() is None,
+          "profile: desktop runs the store step and expects Flathub's catalogue")
+    check("allow_user_install=no" in (o.store_reason() or "") and "allow_user_install=no" in (o.flathub_reason() or ""),
+          "profile: office (allow_user_install=no) skips the store and Flathub, and says why")
+    check("kiosk_mode=yes" in (k.store_reason() or ""), "profile: a kiosk skips the store because it is a kiosk")
+    check("software_store" in (r.store_reason() or "") and "software_store" in (r.flathub_reason() or ""),
+          "profile: revive (no software_store) skips the store and Flathub, and says why")
+    check("locale=fr_FR" in (m.store_reason() or "") and m.flathub_reason() is None,
+          "profile: multilingual skips the store (not English) but still expects Flathub")
+    check(o.apps and "libreoffice-writer" in o.apps and not d.apps,
+          "profile: the programs to look for are the profile's packages_apps")
+    names = [n for n, _, _ in o.steps()]
+    check(len(names) == len(set(names)) and all(why for _, _, why in o.steps()),
+          "profile: every step has a name and a reason; none is silent")
+    check("SKIPPED" in k.markdown() and k.markdown().count("**SKIPPED**") == 2,
+          "profile: the kiosk's summary lists exactly its two skipped steps")
+
+    # each rule on its own, on a throwaway profile written for the test
+    import tempfile
+    from pathlib import Path
+    tmp = Path(tempfile.mkdtemp(prefix="profileplan."))
+    try:
+        for f in (Path(HERE) / ".." / ".." / "profiles").glob("*.profile"):
+            shutil.copy(f, tmp / f.name)
+
+        def scratch(extra):
+            (tmp / "lab.profile").write_text('inherit="desktop"\nprofile_id="lab"\ntheme="moss"\n'
+                                             'shell_archetype="dock"\npackages_apps="gnome-mahjongg gnome-sudoku"\n' + extra)
+            return profileplan.load("lab", tmp)
+
+        base = scratch("")
+        check(base.store_reason() is None and (base.look, base.theme) == ("dock", "moss") and
+              base.apps == ["gnome-mahjongg", "gnome-sudoku"],
+              "profile: a new profile needs no edit here: it starts on its own look and the store step applies")
+        for extra, word in (('kiosk_mode="yes"\n', "kiosk_mode=yes"),
+                            ('allow_user_install="no"\n', "allow_user_install=no"),
+                            ('software_store=""\n', "software_store"),
+                            ('locale="de_DE.UTF-8"\n', "locale=de_DE"),
+                            ('keyboard_layout="de"\n', "keyboard_layout=de")):
+            why = scratch(extra).store_reason() or ""
+            check(word in why, f"profile: {extra.strip()} alone skips the store step, with its reason")
+        check(scratch('allow_theme_change="no"\n').look_offered is False,
+              "profile: allow_theme_change=no gets no look page (installer_profile.py's rule, not a copy of it)")
+        check(scratch('shell_archetype="workbench"\n').look_offered is False,
+              "profile: a look the four cards cannot show gets no look page")
+        for hostile in ("../x", "Office", "a;b", "x" * 33, "", "-h", "no-such-profile"):
+            try:
+                profileplan.load(hostile, tmp)
+                check(False, f"profile: {hostile!r} is refused")
+            except ValueError:
+                check(True, f"profile: {hostile!r} is refused")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # the run refuses the wrong installer, and the desktop-only put-back journey
+    for name, putback, want in (("AurOS-Setup-office.exe", False, True), ("AurOS-Setup.exe", False, False),
+                                ("AurOS-Setup-revive.exe", False, False), ("AurOS-Setup-office.exe", True, False)):
+        try:
+            e2e.load_plan("office", name, putback)
+            got = True
+        except e2e.Failure:
+            got = False
+        check(got == want, f"profile: office with {name}{' and put-back' if putback else ''} is {'accepted' if want else 'refused'}")
+    try:
+        e2e.load_plan("../x", "AurOS-Setup-../x.exe", False)
+        check(False, "profile: a hostile profile name is a Failure")
+    except e2e.Failure:
+        check(True, "profile: a hostile profile name is a Failure")
+
+    # the verdicts
+    fx = lambda n: open(os.path.join(HERE, "fixtures", n)).read()
+    bare = fx("journal-bare-boot.txt")
+    check(all(ok for _, ok, _ in e2e.journal_verdicts(bare, "no Flathub")),
+          "profile: a bare boot with Flathub skipped is green")
+    skipped = [(n, ok, d) for n, ok, d in e2e.journal_verdicts(fx("journal-real-install.txt"), "no Flathub") if "Flathub" in n]
+    check(skipped and all(ok for _, ok, _ in skipped) and "SKIPPED" in skipped[0][0] and "no Flathub" in skipped[0][2],
+          "profile: the skipped Flathub verdict is green and says SKIPPED and why")
+    real = {n: ok for n, ok, _ in e2e.journal_verdicts(fx("journal-real-install.txt"))}
+    check(real.get("Flathub's catalogue fetched") is False,
+          "profile: with no skip given, a journal without the catalogue is still RED")
+
+    first = "\n".join((
+        "2026-10-24T01:00:00+00:00 auros kernel: Command line: quiet",
+        "2026-10-24T01:00:05+00:00 auros aurshell[44]: aurshell: theme 'Light'",
+        "2026-10-24T01:00:05+00:00 auros aurshell[44]: aurshell: archetype 'locked' (Locked)",
+        "2026-10-24T01:01:00+00:00 auros systemd-logind[1]: Power key pressed",
+    ))
+    log = "firstboot: theme applied: sandstone\n=== first boot complete ===\n"
+    own = lambda receipt, shell="/usr/share/auros/shells/locked.shell", theme="sandstone\n": e2e.generic_default_verdicts(
+        ("locked", "sandstone"), receipt, theme, shell, True, log, first, installer_chose=False)
+    check(all(ok for _, ok, _ in own(None)) and all(ok for _, ok, _ in own("language=en_US.UTF-8\n")),
+          "profile: a kiosk whose installer chose no look (no receipt, or one without a look) is green")
+    check(not dict((n, ok) for n, ok, _ in own("language=en_US.UTF-8\nshell=dock\n"))["installer chose no look"] and
+          not dict((n, ok) for n, ok, _ in own("theme=moss\n"))["installer chose no look"],
+          "profile: a kiosk whose installer wrote a look into the receipt is RED")
+    check(not any(ok for n, ok, _ in own(None, shell="/usr/share/auros/shells/dock.shell")
+                  if n in ("applied default look",)) and
+          not any(ok for n, ok, _ in own(None, theme="moss\n") if n == "applied default theme"),
+          "profile: a kiosk that is not on its locked desktop and own theme is RED")
+
+    status = ("Package: libreoffice-writer\nStatus: install ok installed\nVersion: 1\n\n"
+              "Package: evince\nStatus: deinstall ok config-files\n\nPackage: keepassxc\nStatus: install ok installed\n")
+    check(e2e.installed_packages(status) == {"libreoffice-writer", "keepassxc"},
+          "profile: dpkg's status file is read for installed packages only (a removed one is not)")
+    pol = "profile              = office\nkiosk_mode           = no\n"
+    pw = "root:x:0:0::/root:/bin/bash\nauros:x:1000:1000::/home/auros:/bin/bash\n"
+    two = type("P", (), dict(name="office", kiosk=False, default_user="auros", apps=["libreoffice-writer", "keepassxc"]))
+    check(all(ok for _, ok, _ in e2e.profile_disk_verdicts(two, pol, pw, status)),
+          "profile: the right policy, account and programs are green")
+    for what, args in (("another profile's policy", (pol.replace("office", "desktop"), pw, status)),
+                       ("a missing program", (pol, pw, status.replace("keepassxc", "other"))),
+                       ("a missing account", (pol, pw.replace("auros", "someone"), status)),
+                       ("a kiosk policy on a non-kiosk profile", (pol.replace("= no", "= yes"), pw, status)),
+                       ("no policy at all", (None, pw, status))):
+        check(not all(ok for _, ok, _ in e2e.profile_disk_verdicts(two, *args)), f"profile: {what} is RED")
+
+    # inspect --profile: its own expectations cannot be mixed with the manual ones
+    for extra in (["--expect-look", "dock", "--expect-theme", "moss"], ["--diag"], ["--expect-recipe-id", "sha256:" + "a" * 64]):
+        rc = subprocess.run([sys.executable, os.path.join(HERE, "e2e.py"), "inspect", "/nonexistent-out", "/nonexistent-work",
+                             "--profile", "office"] + extra, stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode
+        check(rc == 2, f"profile: inspect --profile with {extra[0]} is refused before it touches a disk")
+
+    # the workflow side: the profile is handed down as an input and is checked in the gate
+    yml = open(os.path.join(HERE, "..", "..", ".github", "workflows", "e2e.yml")).read()
+    check(yml.count("profile: {type: string, required: false, default: ''}") == 1 and
+          "profile:\n        description:" in yml,
+          "profile: e2e.yml takes a profile input from a caller and from a person, empty by default")
+    check("E2E_PROFILE: ${{ inputs.profile }}" in yml and "--profile \"$E2E_PROFILE\"" in yml,
+          "profile: e2e.yml gives the flow E2E_PROFILE and the disk check --profile")
+    check("python3 tools/e2e/profileplan.py" in yml and "[[ $IN_PROFILE =~" in yml,
+          "profile: e2e.yml's gate validates the name and prints the plan before any hours of runner")
+    lines = [l.strip() for l in yml.splitlines() if "inputs.profile" in l]
+    check(lines and all(re.match(r"(E2E_PROFILE|IN_PROFILE|profile): \$\{\{ inputs\.profile \}\}$", l) or l.startswith("#") for l in lines),
+          "profile: e2e.yml reads inputs.profile only into env (never inside a script): " + "; ".join(lines))
+
+
+def test_profile_flow_dry():
+    """cmd_flow's order of steps, against a fake Flow: the desktop release's journey is the
+    same with no profile; a profile's skips the store step by its rule and runs the rest."""
+    try:
+        import e2e, types
+    except ImportError:
+        return
+
+    def journey(profile, installer, store_env=None):
+        calls = []
+
+        class FakeMachine:
+            def alive(self): return False
+            def stop(self, *a, **k): pass
+            def shot(self, *a, **k): pass
+
+        class FakeRec:
+            def write_timings(self): pass
+
+        class FakeFlow:
+            def __init__(self, a): self.m, self.rec = FakeMachine(), FakeRec()
+            def log(self, msg): calls.append("log:" + msg.split(":")[0])
+            def finish_findings(self): return 0
+            def __getattr__(self, name):
+                return lambda *a, **k: calls.append(name)
+
+        saved = (e2e.Flow, e2e.PROFILE, e2e.INSTALLER_NAME, os.environ.get("E2E_STORE"))
+        try:
+            e2e.Flow, e2e.PROFILE, e2e.INSTALLER_NAME = FakeFlow, profile, installer
+            if store_env is None:
+                os.environ.pop("E2E_STORE", None)
+            else:
+                os.environ["E2E_STORE"] = store_env
+            with tempfile.TemporaryDirectory() as t:
+                a = types.SimpleNamespace(out=f"{t}/out", golden="g", work=f"{t}/w")
+                os.makedirs(a.out)
+                rc = e2e.cmd_flow(a)
+                plan_file = os.path.exists(f"{a.out}/profile-journey.txt")
+        finally:
+            e2e.Flow, e2e.PROFILE, e2e.INSTALLER_NAME = saved[:3]
+            if saved[3] is None:
+                os.environ.pop("E2E_STORE", None)
+            else:
+                os.environ["E2E_STORE"] = saved[3]
+        return rc, calls, plan_file
+
+    order = ["boot_windows", "open_website", "click_download", "keep_download", "open_installer",
+             "drive_wizard", "check_variant", "watch_install", "answer_yes"]
+    rc, calls, plan_file = journey("", "AurOS-Setup.exe")
+    check(rc == 0 and [c for c in calls if not c.startswith("log:")] == order + ["store"] and not plan_file,
+          "profile: with no profile the journey is the same steps in the same order, store included, and writes no plan")
+    rc, calls, plan_file = journey("", "AurOS-Setup.exe", store_env="0")
+    check([c for c in calls if not c.startswith("log:")] == order, "profile: E2E_STORE=0 still skips the store, as ever")
+    rc, calls, plan_file = journey("desktop", "AurOS-Setup-desktop.exe")
+    check([c for c in calls if not c.startswith("log:")] == order + ["store"] and plan_file,
+          "profile: the desktop profile runs the store step and writes its plan")
+    rc, calls, plan_file = journey("school-kiosk", "AurOS-Setup-school-kiosk.exe")
+    check(rc == 0 and [c for c in calls if not c.startswith("log:")] == order and "log:store step SKIPPED for profile school-kiosk" in calls and plan_file,
+          "profile: a kiosk runs every step but the store, says it skipped it, and writes its plan")
+    rc, calls, plan_file = journey("office", "AurOS-Setup-office.exe")
+    check([c for c in calls if not c.startswith("log:")] == order, "profile: office skips the store too (allow_user_install=no)")
+    try:
+        journey("office", "AurOS-Setup.exe")
+        check(False, "profile: the desktop installer given to office is refused")
+    except e2e.Failure:
+        check(True, "profile: the desktop installer given to office is refused before any machine starts")
+
+
 def test_store_frame():
     try:
         import e2e, numpy as np
@@ -1949,6 +2177,8 @@ test_store_magnifier()
 test_journal_verdicts()
 test_personalized_verdicts()
 test_generic_default_verdicts()
+test_profile_journey()
+test_profile_flow_dry()
 test_store_frame()
 test_store_content()
 test_store_result()

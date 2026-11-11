@@ -38,6 +38,7 @@ import time
 import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import profileplan                                                # noqa: E402
 import vision                                                    # noqa: E402
 from vm import (Failure, Hub, Machine, Recorder, OVMF_VARS,      # noqa: E402
                 run)
@@ -70,6 +71,13 @@ WEBSITE_PAGE = E("WEBSITE_PAGE", "index.html")
 # The download link's name, as UI Automation reads it from Edge: the
 # website's "Get AurOS" button (an older page said "Download the ...").
 DOWNLOAD_LINK = E("DOWNLOAD_LINK", r"(?i)^\s*get aurOS\b|download.*(installer|aurOS)")
+
+# ── which OS (tools/e2e/profileplan.py) ──────────────────────────────
+# Empty: the public desktop release, exactly as this journey has always run it.
+# A profile name (build/make-os's AurOS-Setup-<profile>.exe): what the journey
+# expects, and which of its steps cannot apply, come from that profile's own
+# policy fields, never from a list here.
+PROFILE = E("E2E_PROFILE", "")
 
 # ── the store, after AurOS works (M3) ────────────────────────────────
 CONTRAST_MIN = 4.5                                    # docs/EASY.md: text on a surface
@@ -3138,6 +3146,24 @@ def cmd_aur(a):
     return rc
 
 
+def load_plan(profile, installer_name, putback):
+    """The profile's plan, or a Failure that says why this run cannot be that
+    profile's journey. The installer must be the one make-os names for it: a
+    desktop installer judged by another profile's expectations is a wrong
+    answer, never a green one."""
+    try:
+        plan = profileplan.load(profile)
+    except ValueError as exc:       # installer_profile.ProfileError
+        raise Failure("E2E_PROFILE=%s: %s" % (profile, exc))
+    want = "AurOS-Setup-%s.exe" % profile
+    if installer_name != want:
+        raise Failure("E2E_PROFILE=%s expects the installer %s, but this run was given %s"
+                      % (profile, want, installer_name))
+    if putback:
+        raise Failure("E2E_PROFILE=%s: the BitLocker put-back journey is the desktop release's" % profile)
+    return plan
+
+
 def cmd_flow(a):
     repository = ""
     default_fastpath = False
@@ -3157,6 +3183,12 @@ def cmd_flow(a):
         INSTALLER_URL, repository, default_fastpath, INSTALLER_SOURCE_SHA)
     if lane_error:
         raise Failure(lane_error)
+    plan = None
+    if PROFILE:
+        plan = load_plan(PROFILE, INSTALLER_NAME, BITLOCKER_PUTBACK)
+        os.makedirs(a.out, exist_ok=True)
+        with open(os.path.join(a.out, "profile-journey.txt"), "w") as fh:
+            fh.write("Profile %s: what this run does, and what it does not.\n%s\n" % (PROFILE, plan.text()))
     f = Flow(a)
     rc = 1
     try:
@@ -3170,7 +3202,9 @@ def cmd_flow(a):
         f.watch_install()
         f.answer_yes()
         store_fail = None
-        if E("E2E_STORE", "1") == "1":
+        if E("E2E_STORE", "1") == "1" and plan is not None and plan.store_reason():
+            f.log("store step SKIPPED for profile %s: %s" % (PROFILE, plan.store_reason()))
+        elif E("E2E_STORE", "1") == "1":
             try:
                 f.store()
             except Failure as e:
@@ -3372,8 +3406,13 @@ def personalized_verdicts(expected, receipt, theme, shell_target,
 
 
 def generic_default_verdicts(expected, receipt, theme, shell_target,
-                             firstboot_stamp, firstboot_log, journal):
-    """Verdicts proving the generic installer's shipped defaults reached the live OS."""
+                             firstboot_stamp, firstboot_log, journal,
+                             installer_chose=True):
+    """Verdicts proving the generic installer's shipped defaults reached the live OS.
+
+    installer_chose=False is for a profile whose installer shows no look page
+    (a kiosk): the installer chose nothing, so the receipt must hold no look,
+    theme or recipe, and the image's own must be what is installed and running."""
     look, want_theme = expected
 
     def one_value(key):
@@ -3387,17 +3426,26 @@ def generic_default_verdicts(expected, receipt, theme, shell_target,
     out = []
     recipe_values = [line[len("recipe_id="):] for line in (receipt or "").splitlines()
                      if line.startswith("recipe_id=")]
-    generic_receipt = receipt is not None and not recipe_values
-    out.append(("no personalized recipe id", generic_receipt,
-                "installed receipt has no recipe_id" if generic_receipt else
-                ("installed receipt is missing" if receipt is None else
-                 f"installed receipt has {len(recipe_values)} recipe_id value(s)")))
-    for name, key, want in (("saved default look", "shell", look),
-                            ("saved default theme", "theme", want_theme)):
-        got, detail = one_value(key)
-        out.append((name, got == want,
-                    f"{key}={got}" if got == want else
-                    f"expected {key}={want}; installed receipt: {detail}"))
+    if installer_chose:
+        generic_receipt = receipt is not None and not recipe_values
+        out.append(("no personalized recipe id", generic_receipt,
+                    "installed receipt has no recipe_id" if generic_receipt else
+                    ("installed receipt is missing" if receipt is None else
+                     f"installed receipt has {len(recipe_values)} recipe_id value(s)")))
+        for name, key, want in (("saved default look", "shell", look),
+                                ("saved default theme", "theme", want_theme)):
+            got, detail = one_value(key)
+            out.append((name, got == want,
+                        f"{key}={got}" if got == want else
+                        f"expected {key}={want}; installed receipt: {detail}"))
+    else:
+        # (no receipt at all is fine: choices.sh writes one only when the
+        # installer left a choices.conf, and a kiosk's has no look in it)
+        chosen = [line.split("=", 1)[0] for line in (receipt or "").splitlines()
+                  if line.split("=", 1)[0] in ("shell", "theme", "recipe_id")]
+        out.append(("installer chose no look", not chosen,
+                    "installed receipt has no shell, theme or recipe_id" if not chosen else
+                    "installed receipt holds " + ", ".join(chosen) + ": the installer chose a look this profile does not offer"))
 
     out.append(("applied default theme", theme == want_theme + "\n",
                 f"/etc/auros/theme={want_theme}" if theme == want_theme + "\n" else
@@ -3434,7 +3482,45 @@ def generic_default_verdicts(expected, receipt, theme, shell_target,
     return out
 
 
-def journal_verdicts(text):
+def installed_packages(dpkg_status):
+    """The names dpkg's status file says are installed (a mounted root's var/lib/dpkg/status)."""
+    names = set()
+    for block in (dpkg_status or "").split("\n\n"):
+        name = re.search(r"^Package: (\S+)$", block, re.M)
+        if name and re.search(r"^Status: \S+ \S+ installed$", block, re.M):
+            names.add(name.group(1))
+    return names
+
+
+def profile_disk_verdicts(plan, policy, passwd, dpkg_status):
+    """What a profile's own computer holds when it is off: the policy file forge wrote for
+    this profile, the account it names, and every program it asked for. [(name, ok, detail)]"""
+    def policy_value(key):
+        m = re.search(r"^%s\s*=\s*(\S*)\s*$" % re.escape(key), policy or "", re.M)
+        return m.group(1) if m else None
+
+    out = []
+    got = policy_value("profile")
+    out.append(("policy.conf names the profile", got == plan.name,
+                f"profile = {got}" if got == plan.name else
+                f"expected profile = {plan.name}; etc/auros/policy.conf says {got!r}"))
+    kiosk = policy_value("kiosk_mode")
+    want = "yes" if plan.kiosk else "no"
+    out.append(("policy.conf kiosk_mode is the profile's", kiosk == want,
+                f"kiosk_mode = {kiosk}" if kiosk == want else f"expected kiosk_mode = {want}; got {kiosk!r}"))
+    users = {line.split(":", 1)[0] for line in (passwd or "").splitlines()}
+    out.append((f"the account {plan.default_user} exists", plan.default_user in users,
+                "etc/passwd has it" if plan.default_user in users else
+                f"etc/passwd has no {plan.default_user!r}"))
+    if plan.apps:
+        have = installed_packages(dpkg_status)
+        missing = [a for a in plan.apps if a not in have]
+        out.append((f"the profile's {len(plan.apps)} programs are installed", not missing,
+                    ", ".join(plan.apps) if not missing else "not installed: " + ", ".join(missing)))
+    return out
+
+
+def journal_verdicts(text, skip_flathub=None):
     """Gating verdicts from AurOS's own journal of its FIRST session (the first
     boot in it: the one the installer handed over to, on a Windows variant; the
     only one on the bare image), up to the power button. [(name, ok, detail)].
@@ -3470,9 +3556,14 @@ def journal_verdicts(text):
         out.append(("network within 60 s of the desktop", not late,
                     (f"online {int(tn - td)} s after the desktop" if td and tn else "online") + ": " + net.split(" ", 2)[-1][:120]))
     cat = first(r"software-ready: Flathub's catalogue fetched")
-    out.append(("Flathub's catalogue fetched", bool(cat),
-                cat.split("software-ready: ")[-1] if cat else "never; software-ready said: " +
-                ((first(r"software-ready: Flathub's catalogue: not yet") or "nothing").split("software-ready: ")[-1])))
+    if skip_flathub:
+        # A profile with no Flathub (profileplan.Plan.flathub_reason): software-ready
+        # stamps the catalogue without a word, so the line can never be there.
+        out.append(("Flathub's catalogue fetched (SKIPPED)", True, "SKIPPED: " + skip_flathub))
+    else:
+        out.append(("Flathub's catalogue fetched", bool(cat),
+                    cat.split("software-ready: ")[-1] if cat else "never; software-ready said: " +
+                    ((first(r"software-ready: Flathub's catalogue: not yet") or "nothing").split("software-ready: ")[-1])))
     chr_ = first(r"chronyd\[\d+\]: Selected source")
     out.append(("clock synced (chrony)", bool(chr_), chr_.split("chronyd")[-1][:100] if chr_ else "chrony never selected a time source"))
     failed = sorted({m.group(1) for l in win for m in [re.search(r"([\w@:.\\-]+\.(?:service|socket|mount|timer|path))(?:: Failed with result|: Failed to start| entered failed state)", l)] if m}
@@ -3483,7 +3574,7 @@ def journal_verdicts(text):
 
 
 def aur_root_report(rec, mnt, out_dir, expected_personalization=None,
-                    expected_defaults=None):
+                    expected_defaults=None, plan=None):
     """What AurOS's own disk says, read with the machine off (every variant, pass
     or fail): its logs, the software catalogue (what the store has to show),
     stamps of the store's first-start job, and the journal of every boot. The
@@ -3530,10 +3621,10 @@ def aur_root_report(rec, mnt, out_dir, expected_personalization=None,
     pick = [l for l in full.splitlines() if key.search(l)]
     warn = [l for l in full.splitlines() if re.search(r"\b(warning|error|critical|failed|denied|fatal)\b", l, re.I)]
     journal = full.split("-----", 1)[-1]
-    v = journal_verdicts(journal)
-    if expected_personalization or expected_defaults:
-        def root_file(rel):
-            result = run(["sudo", "head", "-c", "65536", os.path.join(mnt, rel)], rec, check=False)
+    v = journal_verdicts(journal, plan.flathub_reason() if plan else None)
+    if expected_personalization or expected_defaults or plan:
+        def root_file(rel, limit=65536):
+            result = run(["sudo", "head", "-c", str(limit), os.path.join(mnt, rel)], rec, check=False)
             return result.stdout if result.returncode == 0 else None
 
         link = run(["sudo", "readlink", os.path.join(mnt, "etc/auros/shell/active.shell")],
@@ -3546,7 +3637,15 @@ def aur_root_report(rec, mnt, out_dir, expected_personalization=None,
                     stamp,
                     root_file("var/log/auros-firstboot.log"),
                     journal)
-        if expected_personalization:
+        if plan:
+            pv = generic_default_verdicts((plan.look, plan.theme), *evidence,
+                                          installer_chose=plan.look_offered)
+            pv += profile_disk_verdicts(plan, root_file("etc/auros/policy.conf"),
+                                        root_file("etc/passwd"),
+                                        root_file("var/lib/dpkg/status", 64 * 1024 * 1024))
+            heading = f"Profile {plan.name} on the installed, powered-off system:\n"
+            verdict_file = "profile-verdicts.txt"
+        elif expected_personalization:
             pv = personalized_verdicts(expected_personalization, *evidence)
             heading = "The requested recipe on the installed, powered-off system:\n"
             verdict_file = "personalized-verdicts.txt"
@@ -3624,6 +3723,14 @@ def cmd_inspect(a):
     disk = os.path.join(a.work, "win.qcow2")
     out, found = [], {}
     attached = []
+    plan = None
+    if getattr(a, "profile", ""):
+        try:
+            plan = profileplan.load(a.profile)
+        except ValueError as exc:       # installer_profile.ProfileError
+            raise Failure("--profile %s: %s" % (a.profile, exc))
+        with open(os.path.join(a.out, "profile-journey.txt"), "a") as fh:
+            fh.write("Profile %s: what this run does, and what it does not.\n%s\n" % (a.profile, plan.text()))
     with rec.phase("inspect: the disk, machine off"):
         dev = "/dev/nbd0"
         run("sudo modprobe nbd max_part=16", rec, check=False)
@@ -3670,7 +3777,7 @@ def cmd_inspect(a):
                                         if a.expect_recipe_id else None)
                         defaults = ((a.expect_look, a.expect_theme)
                                     if a.expect_look and not a.expect_recipe_id else None)
-                        out.append(aur_root_report(rec, mnt, a.out, personalized, defaults))
+                        out.append(aur_root_report(rec, mnt, a.out, personalized, defaults, plan))
                 finally:
                     run(["sudo", "umount", mnt], rec, check=False)
             out.append("found: " + json.dumps(found, indent=1))
@@ -3683,7 +3790,8 @@ def cmd_inspect(a):
                 return 0
             if red:
                 raise Failure("AurOS's first session after the install: " + " | ".join(red))
-            if not found:
+            if not found and not (plan is not None and plan.store_reason()):
+                # (a profile whose store step was skipped installed no program from it)
                 raise Failure(f"none of {APP_FILES} is on any Linux partition")
         finally:
             for kind, d in attached:
@@ -3712,8 +3820,16 @@ def main():
     i.add_argument("--expect-recipe-id", help="require this personalized sha256 recipe on the installed system")
     i.add_argument("--expect-look", help="require this shell archetype on the installed system")
     i.add_argument("--expect-theme", help="require this theme on the installed system")
+    i.add_argument("--profile", default="",
+                   help="the profile whose installer was run (build/make-os): its look, theme, policy, "
+                        "account and programs are what the installed system must hold")
     a = p.parse_args()
     if a.cmd == "inspect":
+        if a.profile and (a.diag or a.expect_recipe_id or a.expect_look or a.expect_theme):
+            p.error("--profile derives its own expectations: it cannot be combined with "
+                    "--diag, --expect-recipe-id, --expect-look or --expect-theme")
+        if a.profile and not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?", a.profile):
+            p.error("--profile must be a profile name (lowercase letters, digits and hyphens; 1-32 characters)")
         choices = (a.expect_look, a.expect_theme)
         if any(choices) and not all(choices):
             p.error("--expect-look and --expect-theme must be given together")
