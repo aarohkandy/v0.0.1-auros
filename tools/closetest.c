@@ -153,9 +153,11 @@ static void slow_programs(const char *id, const shell_layout *L, shell_ctx *c)
     fake_pid_state = PROC_RUNNING;
     int i = press(c, L, 2);
     shell_start_tick(c, i, T0);
-    shell_start_tick(c, i, T0 + 30000);                     /* 5 s past the old limit */
+    int told = shell_start_tick(c, i, T0 + 30000);          /* 5 s past the old limit */
     check(id, "slow program, 30 s: she is told it is still starting, calmly",
           says(c, i, "Still starting") && !says_failure(c, i) && c->wins[i].starting, c->wins[i].subtitle);
+    check(id, "...and the shell is told the words changed (nothing else repaints the card)",
+          told == 1 && shell_start_tick(c, i, T0 + 31000) == 0, "it did not say so, or said it twice");
     shell_start_tick(c, i, T0 + 180000);                    /* GNOME Software's three minutes */
     check(id, "slow program, 3 min: still no failure words, still waiting", !says_failure(c, i) && c->wins[i].starting, c->wins[i].subtitle);
     int j = shell_window_arrived(c, L, 2, 100, 0);

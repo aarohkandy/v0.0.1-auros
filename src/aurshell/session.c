@@ -82,10 +82,11 @@ _Static_assert((int)WREQ_MOVE == (int)AURWL_REQ_MOVE && (int)WREQ_MAXIMIZE == (i
                (int)WREQ_UNFULLSCREEN == (int)AURWL_REQ_UNFULLSCREEN,
                "the two sets of request bits agree");
 
-void session_sync(shell_ctx *c, const shell_layout *L)
+int session_sync(shell_ctx *c, const shell_layout *L)
 {
+    int words_changed = 0;
     void (*present)(shell_ctx *, int) = L ? L->present : NULL;
-    if (!c->wl) return;
+    if (!c->wl) return 0;
     aurwl *wl = c->wl;
 
     int seen[SHELL_MAX_WINS];
@@ -182,8 +183,9 @@ void session_sync(shell_ctx *c, const shell_layout *L)
             shell_win_gone(c, L, i);       /* the client went away */
             continue;
         }
-        shell_start_tick(c, i, t);
+        if (shell_start_tick(c, i, t)) words_changed = 1;
     }
+    return words_changed;
 }
 
 /* ── input ──────────────────────────────────────────────────────── */

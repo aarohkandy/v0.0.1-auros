@@ -1026,27 +1026,36 @@ int shell_launch(shell_ctx *c, int app)
 #define SAY_NOT_OPENING    "This is still not open. You can close this and try again."
 #define SAY_FAILED         "This did not start"
 
-static void say(win_entry *w, const char *s) { copy_str(w->subtitle, sizeof w->subtitle, s); }
-
-void shell_start_tick(shell_ctx *c, int i, uint32_t t)
+/* Says it, and tells the caller (1) only when the words are not already those: the screen is
+ * painted when something changed, and a card whose line changed on its own, with no key and no
+ * window, changed nothing that repainted it. */
+static int say(win_entry *w, const char *s)
 {
-    if (!c || i < 0 || i >= c->n_wins) return;
+    if (!strcmp(w->subtitle, s)) return 0;
+    copy_str(w->subtitle, sizeof w->subtitle, s);
+    return 1;
+}
+
+int shell_start_tick(shell_ctx *c, int i, uint32_t t)
+{
+    if (!c || i < 0 || i >= c->n_wins) return 0;
     win_entry *e = &c->wins[i];
-    if (!e->starting || e->wid) return;
-    if (!e->start_ms) { e->start_ms = t ? t : 1; return; }
+    if (!e->starting || e->wid) return 0;
+    if (!e->start_ms) { e->start_ms = t ? t : 1; return 0; }
     uint32_t waited = t - e->start_ms;
     int st = (c->proc && e->pid > 0) ? c->proc(c, e->pid) : PROC_UNKNOWN;
 
-    if (st == PROC_FAILED) { say(e, SAY_FAILED); e->starting = 0; return; }
+    if (st == PROC_FAILED) { e->starting = 0; return say(e, SAY_FAILED) | 1; }
     if (st == PROC_RUNNING) {
-        if (waited >= START_STUCK_MS) say(e, SAY_NOT_OPENING);
-        else if (waited >= START_SLOW_MS) say(e, SAY_STILL_STARTING);
-        return;
+        if (waited >= START_STUCK_MS) return say(e, SAY_NOT_OPENING);
+        if (waited >= START_SLOW_MS) return say(e, SAY_STILL_STARTING);
+        return 0;
     }
     /* Gone and well, or not able to be asked: the window may still come from
      * whatever it handed the job to. */
-    if (waited >= START_HANDOFF_MS) { say(e, SAY_FAILED); e->starting = 0; }
-    else if (waited >= START_SLOW_MS) say(e, SAY_STILL_STARTING);
+    if (waited >= START_HANDOFF_MS) { e->starting = 0; return say(e, SAY_FAILED) | 1; }
+    if (waited >= START_SLOW_MS) return say(e, SAY_STILL_STARTING);
+    return 0;
 }
 
 /* A window of application `app` (-1: it reported none) has mapped, as `id`.

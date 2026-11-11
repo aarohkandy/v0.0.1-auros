@@ -617,7 +617,7 @@ enum { PROC_UNKNOWN = 0,     /* cannot say: judged by the clock alone           
  * what is true about the wait (subtitle), and gives up only when the program
  * has gone without one. A slot that gave up still takes its window if one
  * comes (shell_adopt_slot). */
-void shell_start_tick(shell_ctx *c, int i, uint32_t now_ms);
+int  shell_start_tick(shell_ctx *c, int i, uint32_t now_ms);   /* 1 when the words on the card changed */
 /* A window of application `app` mapped as `id`: it takes the window-less slot
  * that application has (however long it waited), or a new one; returns the slot
  * (-1: the list is full). The one place a window and a slot meet. */

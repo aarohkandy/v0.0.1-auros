@@ -1577,7 +1577,7 @@ int main(int argc, char **argv)
             aurwl_dispatch(c.wl);
             aurwl_reap(c.wl);
             int before = c.n_wins;
-            session_sync(&c, L);
+            if (session_sync(&c, L)) dirty = 1;      /* "Still starting" appears with no key pressed */
             /* It closed: "press Close this again" now names a button that is gone. */
             if (close_asked_wid && !session_win(&c, close_asked_wid)) {
                 osd_unsay(ASKING_TO_CLOSE);
