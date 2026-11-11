@@ -113,6 +113,7 @@ and writes no look, so the image's own stays. With no profile named,
 Proof without Windows: `sh tools/profileinstalltest.sh` (any profile, no
 root), and `NOSTICK_PROFILE=baked sh tools/nosticktest.sh` after a
 `build/aurbridge` for that profile.
+Without a Linux machine, `.github/workflows/make-os.yml` does all of this on GitHub: [MAKE-AN-OS.md](MAKE-AN-OS.md).
 
 ### The installer as published (image pieces baked in)
 

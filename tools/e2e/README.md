@@ -112,6 +112,35 @@ with 10–30 minutes typical for put-back. The workflow retains its 355-minute
 job cap; the second Windows return is bounded at 20 minutes and its asynchronous
 file/cleanup completion gets a further 30-minute deadline.
 
+## A profile's own installer (`profile`, `E2E_PROFILE`)
+
+`build/make-os` makes `AurOS-Setup-<profile>.exe`, and `make-os.yml` publishes it
+and calls this workflow with `profile: <name>`. With no profile nothing here
+changes: it is the public desktop release's journey. With one, the profile's own
+file (read by `tools/customize/installer_profile.py`, the code that decides what
+the installer asks) says what to expect and what cannot apply
+(`tools/e2e/profileplan.py PROFILE`, no numpy, so the gate can print it first):
+
+- **Look and theme.** Where the installer offers the look page (an ordinary
+  profile) the journey presses through it and expects the installed system to
+  hold the profile's own look and theme (the wizard's Like Windows / Light for
+  `desktop`). Where it does not (a kiosk, or `allow_settings_change` /
+  `allow_theme_change` = `no`) it expects the image's own, and that the
+  installer wrote none.
+- **Skipped, by a stated rule, never silently.** The store step (VLC) when the
+  profile is a kiosk, has no `software_store`, sets `allow_user_install=no`, or
+  has a non-English `locale` or a non-US `keyboard_layout` (the journey finds the
+  store's buttons by their English names and types on a US keyboard); Flathub's
+  first-start check when the image has none. Each run's summary lists every step
+  as runs or SKIPPED with the reason, and `profile-journey.txt` in the evidence
+  holds the same.
+- **Added.** Powered off, `inspect --profile NAME` also checks that `policy.conf`
+  names the profile, its account exists, and every program in its `packages_apps`
+  is installed.
+- **Refused.** A profile with a desktop-only lane (`aur`, `bitlocker_putback`, a
+  personalized artifact), without the installer's exact SHA-256, or whose
+  installer is not named `AurOS-Setup-<profile>.exe`.
+
 The variant's Windows is set up by `guest/firstlogon.ps1` from
 `e2e\variant.txt` on the answer CD (`mkanswer.sh`, `E2E_GOLDEN`,
 `E2E_DISK_GB`).

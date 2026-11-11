@@ -39,6 +39,10 @@ on:
       hdd_throttle: {type: string, required: false, default: ''}
       build_run: {type: string, required: false, default: ''}
       bitlocker_putback: {type: boolean, required: false, default: false}
+      # build/make-os's installer for ONE profile (AurOS-Setup-<profile>.exe,
+      # make-os.yml): the journey's expectations and skipped steps follow that
+      # profile (tools/e2e/profileplan.py). Empty: the desktop release, as ever.
+      profile: {type: string, required: false, default: ''}
     outputs:
       certified:
         description: A personalized base journey actually ran with all expectations
@@ -62,6 +66,11 @@ on:
         type: boolean
         required: false
         default: false
+      profile:
+        description: Profile of a build/make-os installer (AurOS-Setup-PROFILE.exe); empty for the desktop release
+        type: string
+        required: false
+        default: ''
 
 # contents: write is for the jobs that make or fill a release, and only
 # those (SEC-005): a job that runs a lot of code cannot replace what a
@@ -114,6 +123,7 @@ jobs:
           EXPECTED_THEME: ${{ inputs.expected_theme }}
           IN_VARIANTS: ${{ inputs.variants }}
           IN_BITLOCKER_PUTBACK: ${{ inputs.bitlocker_putback }}
+          IN_PROFILE: ${{ inputs.profile }}
           EVENT: ${{ github.event_name }}
         run: |
           # "aur" is not a Windows: it boots the AurOS image alone and drives its
@@ -123,6 +133,27 @@ jobs:
             case ",$1," in *,aur,*) echo "aur=true" >> "$GITHUB_OUTPUT" ;; *) echo "aur=false" >> "$GITHUB_OUTPUT" ;; esac
             echo "variants=$(printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps([x for x in sys.stdin.read().split(",") if x and x != "aur"]))')" | tee -a "$GITHUB_OUTPUT"
           }
+          # An installer made by build/make-os for one profile: the exact file
+          # (its hash), named for the profile, base journey only, none of the
+          # desktop-only lanes. Anything else is refused here, in seconds, and
+          # the plan (what will run, what will be skipped and why) is printed
+          # before hours of runner are spent.
+          if [ -n "$IN_PROFILE" ]; then
+            [[ $IN_PROFILE =~ ^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$ ]] \
+              || { echo "::error::profile must be lower-case letters, digits and dashes (1-32 characters)"; exit 2; }
+            [ -z "$IN_ARTIFACT$EXPECTED_RECIPE_ID$EXPECTED_LOOK$EXPECTED_THEME" ] && [ "$IN_BITLOCKER_PUTBACK" != true ] \
+              || { echo "::error::a profile journey does not take a personalized artifact, recipe, look, theme or put-back"; exit 2; }
+            [[ $IN_SHA256 =~ ^[0-9a-f]{64}$ ]] \
+              || { echo "::error::a profile journey needs the installer's exact SHA-256"; exit 2; }
+            case ",${IN_VARIANTS:-base}," in *,aur,*) echo "::error::the aur variant boots the desktop image: not for a profile"; exit 2 ;; esac
+            case "$IN_URL" in
+              "https://github.com/$GITHUB_REPOSITORY/releases/download/"*"/AurOS-Setup-$IN_PROFILE.exe") ;;
+              *) echo "::error::installer_url must be this repository's release asset AurOS-Setup-$IN_PROFILE.exe"; exit 2 ;;
+            esac
+            python3 tools/e2e/profileplan.py "$IN_PROFILE" --markdown > "$RUNNER_TEMP/plan.md" \
+              || { echo "::error::profile $IN_PROFILE cannot be made into an installer at this commit"; exit 2; }
+            tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/plan.md"
+          fi
           # A same-run custom artifact is deliberately narrower than the URL
           # interface: exactly one signed artifact, base only, with all three
           # expectations. A skipped or partially described journey is refused.
@@ -227,6 +258,7 @@ jobs:
     env:
       E2E_VARIANT: ${{ matrix.variant }}
       E2E_BITLOCKER_PUTBACK: ${{ inputs.bitlocker_putback && matrix.variant == 'bitlocker' && '1' || '0' }}
+      E2E_PROFILE: ${{ inputs.profile }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -356,13 +388,19 @@ jobs:
           /usr/bin/python3 tools/e2e/e2e.py flow "$E2E_DIR/out/flow" "$E2E_DIR/golden" "$E2E_DIR/work"
 
       - name: M3 - the program is on AurOS's disk (machine off)
+        id: inspect
         if: steps.flow.outcome == 'success' && env.E2E_BITLOCKER_PUTBACK != '1'
         env:
           EXPECTED_RECIPE_ID: ${{ inputs.expected_recipe_id }}
           EXPECTED_LOOK: ${{ inputs.expected_look }}
           EXPECTED_THEME: ${{ inputs.expected_theme }}
         run: |
-          if [ -n "$EXPECTED_RECIPE_ID" ]; then
+          if [ -n "$E2E_PROFILE" ]; then
+            # the look, theme, policy, account and programs of THAT profile
+            /usr/bin/python3 tools/e2e/e2e.py inspect \
+              "$E2E_DIR/out/inspect" "$E2E_DIR/work" \
+              --profile "$E2E_PROFILE"
+          elif [ -n "$EXPECTED_RECIPE_ID" ]; then
             /usr/bin/python3 tools/e2e/e2e.py inspect \
               "$E2E_DIR/out/inspect" "$E2E_DIR/work" \
               --expect-recipe-id "$EXPECTED_RECIPE_ID" \
@@ -388,6 +426,17 @@ jobs:
           else
             /usr/bin/python3 tools/e2e/e2e.py inspect "$E2E_DIR/out/diag" "$E2E_DIR/work" --diag
           fi
+
+      # A profile's run says in plain words which steps it ran and which it
+      # did not, and why (profileplan.py): never a silent pass.
+      - name: which steps this profile's journey ran, and which it skipped
+        if: always() && env.E2E_PROFILE != ''
+        run: |
+          {
+            python3 tools/e2e/profileplan.py "$E2E_PROFILE" --markdown
+            echo
+            echo "Result of this run (variant $E2E_VARIANT): the journey was **${{ steps.flow.outcome }}**, the check of the installed disk was **${{ steps.inspect.outcome }}**. A step that runs is proved only if both say success."
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: publish the evidence (prerelease e2e-${{ github.run_id }})
         if: always()
