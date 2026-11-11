@@ -167,7 +167,8 @@ if [ "$AUROS_RELEASE" = 1 ]; then
         || die "the installer does not know which Microsoft key the shim is signed with"
 fi
 rm -f "$DEST/.strings.txt"
-sh "$ROOT/tools/manifesttest.sh" "$DEST/AurOS-Setup-$PROFILE.exe" || die "the installer's manifest is one Windows would refuse"
+# (its own throwaway build of a broken manifest must not be a release build)
+AUROS_RELEASE=0 sh "$ROOT/tools/manifesttest.sh" "$DEST/AurOS-Setup-$PROFILE.exe" || die "the installer's manifest is one Windows would refuse"
 "$OUT/aurbridge-sim" gzselftest
 "$OUT/aurbridge-sim" sbselftest
 note "the .exe is for profile '$PROFILE', carries staging + shim, and names $BASE_URL"
