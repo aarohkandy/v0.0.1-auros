@@ -43,9 +43,16 @@ packages_apps="libreoffice-writer libreoffice-calc libreoffice-impress
                remmina remmina-plugin-rdp
                keepassxc"
 
+# NO `sssd` HERE (nor libnss-sss, libpam-sss, sssd-tools), though a directory login is what a
+# fleet may one day want. Nothing in this product configures it -- enrollment_url below is
+# written into policy.conf and read by nothing -- and an sssd with no /etc/sssd/sssd.conf is
+# worse than none: seven socket units "Dependency failed" on every single boot (the first-boot
+# check in tools/profiletest.sh now refuses any unit that does), and `sss` in /etc/nsswitch.conf
+# for passwd, group, services and the rest, putting a directory that nobody is enrolled in in
+# the path of every name lookup on the machine. An organisation that has a directory adds
+# those four packages to its own copy of this file AND ships its sssd.conf with it.
 packages_extra="cups cups-client cups-filters system-config-printer
                 avahi-daemon
-                sssd sssd-tools libnss-sss libpam-sss
                 openssh-client
                 ca-certificates"
 
