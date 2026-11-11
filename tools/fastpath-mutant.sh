@@ -23,6 +23,9 @@
 #                      -> red: "it ran on a disk it was not named"
 #    no-sysdisk-check  the disk Windows runs from is accepted
 #                      -> red: "refused, but not for being the system disk"
+#    no-sysdisk-unknown  a disk is accepted when Windows' disk could not be found (-1)
+#                      -> stays GREEN by itself: no step makes preflight lose the system
+#                         disk on the runner, so nothing exercises the guard's other half
 #    putback-no-hash   a copy is not checked against AurOS's hash (handover job)
 #                      -> red: "a file changed after AurOS wrote DONE"
 #    putback-no-done   a handover volume without DONE is consumed
@@ -128,6 +131,8 @@ no-guid-check)
     sub src/aurbridge/main.c 'if (_stricmp(g, want_guid) != 0) {' 'if (0) {' ;;
 no-sysdisk-check)
     sub src/aurbridge/main.c 'r.system_disk == disk)' 'r.system_disk == disk && 0)' ;;
+no-sysdisk-unknown)
+    sub src/aurbridge/main.c 'if (r.system_disk < 0 || r.system_disk == disk)' 'if (r.system_disk == disk)' ;;
 file-changed)
     # applied by fastpath.yml between the engine's run and the independent
     # check (it needs the throwaway disk); nothing to change in the source.
