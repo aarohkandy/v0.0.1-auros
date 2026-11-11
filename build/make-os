@@ -182,7 +182,7 @@ if [ "$VERIFY" = 1 ]; then
     sed "s|^base .*|base http://127.0.0.1:$PORT/|" "$DEST/pieces-$PROFILE.txt" > "$V/pieces.txt"
     ( cd "$DEST" && exec python3 -m http.server "$PORT" --bind 127.0.0.1 >/dev/null 2>&1 ) &
     SRV=$!
-    trap 'kill $SRV 2>/dev/null; rm -rf "$V"; rm -f "$TMPH"' EXIT
+    trap 'kill $SRV 2>/dev/null || true; rm -rf "$V"; rm -f "$TMPH"' EXIT
     sleep 1
     "$OUT/aurbridge-sim" getimage "$V/pieces.txt" "$V/unpacked.img" "$sha" "$bytes" \
         || die "the installer's own code cannot fetch these pieces back into the image"
