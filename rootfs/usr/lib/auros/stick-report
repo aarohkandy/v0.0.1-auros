@@ -26,7 +26,8 @@
 #    - lines that carry a password, key or secret lose everything after
 #      the label; so do serial numbers;
 #    - UUIDs, MAC addresses, the people's names and anything under
-#      /home or the media folders are removed from every line;
+#      /home or the media folders (the rest of that line, a name may have
+#      spaces in it) are removed from every line;
 #    - the top of the file says what is and is not in it.
 #  It is a filter on the way out, not a promise about what a program
 #  chose to log; the header says that too. What can still slip through: a
@@ -46,6 +47,15 @@ JOURNAL_MAX=1048576    # bytes a journal or kernel log may take (4000 lines of ~
 OUT_MAX=6291456        # bytes the whole report may take
 
 refuse() { echo "stick-report: refusing: $*" >&2; exit 3; }
+# A write that did not work: exit 4 (ferry's own code for "not enough room") when the stick
+# has under 1 MiB left, else 1.
+failed() {
+    echo "stick-report: $*" >&2
+    _a=$(df -Pk "$T" 2>/dev/null | awk 'NR == 2 { print $4 }')
+    case $_a in ''|*[!0-9]*) exit 1 ;; esac
+    [ "$_a" -ge 1024 ] || exit 4
+    exit 1
+}
 
 # ── the one argument, and what it must be ──────────────────────────
 [ $# -eq 1 ] || refuse "one argument, a mounted USB stick, is needed"
@@ -73,8 +83,13 @@ HOST=$(hostname 2>/dev/null || cat "$R/etc/hostname" 2>/dev/null || true)
 # [this-pc]-answer.service. Only a name she (or a maker) chose is removed.
 [ "$HOST" != auros ] || HOST=
 # The login names and real names of the people's accounts (uid 1000 and up):
-# "New session 3 of user NAME" is in nearly every journal.
-PEOPLE=$(getent passwd 2>/dev/null | awk -F: '$3 >= 1000 && $3 < 60000 { print $1; split($5, g, ","); if (g[1] != "") print g[1] }' | tr '\n' ':')
+# "New session 3 of user NAME" is in nearly every journal. The account every AurOS PC
+# starts with is called "auros" (profiles/desktop.profile default_user): like the usual
+# host name that is not private, and removing it would garble auros-answer.service and
+# /etc/auros. Only a name she (or a maker) chose is removed.
+PEOPLE=$(getent passwd 2>/dev/null | awk -F: '$3 >= 1000 && $3 < 60000 {
+    if (tolower($1) != "auros") print $1
+    split($5, g, ","); if (g[1] != "" && tolower(g[1]) != "auros") print g[1] }' | tr '\n' ':')
 # Wi-Fi names: saved Wi-Fi connections (NAME of a wifi row) and networks in range.
 # Only names are asked for, never a secret, and no file of NetworkManager's is opened.
 # nmcli -t escapes : and \ with a backslash; one name per line, longest first.
@@ -110,10 +125,14 @@ redact() {
         }
         return 0
     }
-    function cut(s, w,   out, i) {
+    # a name is taken out whatever its case (MyNet, MYNET, mynet); plain text, not a pattern
+    function cut(s, w,   out, i, l, lw) {
         if (length(w) < 3) return s
-        out = ""
-        while ((i = index(s, w)) > 0) { out = out substr(s, 1, i - 1) "[removed]"; s = substr(s, i + length(w)) }
+        lw = tolower(w); l = tolower(s); out = ""
+        while ((i = index(l, lw)) > 0) {
+            out = out substr(s, 1, i - 1) "[removed]"
+            s = substr(s, i + length(w)); l = substr(l, i + length(w))
+        }
         return out s
     }
     # the quoted value after an ssid / essid / connection label, in any case: ssid 'X', SSID="X", "ssid": "X"
@@ -152,8 +171,8 @@ redact() {
     sed -E \
         -e 's/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/[id-removed]/g' \
         -e 's/([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}/[mac-removed]/g' \
-        -e 's#/home/[^ "]*#/home/[removed]#g' \
-        -e 's#(/run/media|/media)/[^ "]*#\1/[removed]#g'
+        -e 's#/home/.*#/home/[removed]#' \
+        -e 's#(/run/media|/media)/.*#\1/[removed]#'
 }
 # tail_cap  -- stdin to stdout, at most JOURNAL_MAX bytes, keeping the NEWEST lines
 # (the failure is at the end); says so when older ones were cut.
@@ -195,8 +214,15 @@ filesec() {
 
 # ── the report, built beside its final name and moved into place ───
 D=$(date +%Y-%m-%d 2>/dev/null || echo undated)
-NAME="AurOS-report-$D.txt"
-[ ! -e "$T/$NAME" ] || NAME="AurOS-report-$D-$(date +%H%M%S).txt"
+# The first name that is free on the stick (-L too: -e is false for a link to nowhere);
+# a name on it is never written through or over. Bounded: 50 reports in a day is enough.
+NAME="AurOS-report-$D.txt"; n=1
+while [ -e "$T/$NAME" ] || [ -L "$T/$NAME" ]; do
+    n=$((n + 1))
+    [ "$n" -le 50 ] || { echo "stick-report: no free name for the report on the stick" >&2; exit 1; }
+    NAME="AurOS-report-$D-$(date +%H%M%S 2>/dev/null || echo 000000).txt"
+    [ "$n" -eq 2 ] || NAME="${NAME%.txt}-$n.txt"
+done
 PART="$T/.$NAME.part"
 # A stick is not trusted: a name on it may be a link to a file of ours (NTFS keeps
 # links). So the half-written file is taken away first and made new (set -C: it must
@@ -204,7 +230,7 @@ PART="$T/.$NAME.part"
 rm -f "$PART" "$PART.cut"
 trap 'rm -f "$NAMES" "$PART" "$PART.cut"' EXIT
 trap 'exit 1' TERM INT HUP
-(set -C; : > "$PART") || { echo "stick-report: could not write on the stick" >&2; exit 1; }
+(set -C; : > "$PART") || failed "could not write on the stick"
 {
 cat <<EOF
 AurOS report, saved $(date -u '+%Y-%m-%d %H:%M UTC' 2>/dev/null)
@@ -213,7 +239,7 @@ For the person helping: this file says how this computer is set up and what it c
 WHAT IS IN IT
   - the system messages with warnings and errors, this start and the one before
   - the hardware list (PCI and USB), the sound cards, the disks' layout
-  - the choices made when AurOS was installed, and the installer's own record
+  - the choices made when AurOS was installed
   - the network cards and whether radios are switched off (not the network's name)
   - the AurOS version and the kernel version
 
@@ -222,7 +248,7 @@ WHAT IS NOT IN IT, ON PURPOSE
   - the names of Wi-Fi networks this computer has saved or can see are replaced
     with [removed]
   - lines that name a serial number lose it; UUIDs and network-card addresses are replaced
-  - paths under /home and the media folders are replaced, so the names of her files there are gone
+  - paths under /home and the media folders are replaced, with the rest of that line, so the names of her files there are gone
   - the login names and full names of the people who use this computer are replaced
     with [removed]; so is this computer's name, if it was changed from the usual one
     (a first name written alone is not looked for)
@@ -235,7 +261,6 @@ sec "AurOS version"
 { cat "$R/usr/lib/os-release" 2>/dev/null || echo "(no os-release)"; } | redact
 run "Kernel" uname -a
 filesec "Installer choices (/etc/auros/*.conf)" "$R"/etc/auros/*.conf
-filesec "Installer's record (journal.json)" "$R/aurbridge/journal.json" "$R/run/aurbridge/journal.json"
 run "System messages, this start (warnings and worse, last $LINES_MAX)" \
     journalctl -b 0 -p warning -n "$LINES_MAX" --no-pager -o short-iso
 run "System messages, the start before (warnings and worse, last $LINES_MAX)" \
@@ -254,15 +279,17 @@ printf '\n===== end of report =====\n'
 # A full or failing stick hides its write errors above: only a file that ends with
 # the closing line is whole. Anything else is not "done".
 [ "$(tail -n 1 "$PART" 2>/dev/null)" = "===== end of report =====" ] \
-    || { echo "stick-report: the stick is full or could not be written to" >&2; exit 1; }
+    || failed "the stick is full or could not be written to"
 if [ "$(wc -c < "$PART")" -gt "$OUT_MAX" ]; then
     head -c "$OUT_MAX" "$PART" > "$PART.cut" && mv -f "$PART.cut" "$PART"
     printf '\n===== report cut here: it was longer than %s bytes =====\n' "$OUT_MAX" >> "$PART"
 fi
 chmod 0644 "$PART" 2>/dev/null
-sync -f "$T" 2>/dev/null || sync
-mv -f "$PART" "$T/$NAME" || { echo "stick-report: could not finish the file" >&2; exit 1; }
-sync -f "$T" 2>/dev/null || sync
+# A flush that fails is a failure: "written" must mean the stick has it (a bare `sync` would
+# say nothing either way). -T: the name is a file, never a folder to move into.
+sync -f "$T" 2>/dev/null || failed "the stick did not take what was written"
+mv -fT "$PART" "$T/$NAME" || failed "could not finish the file"
+sync -f "$T" 2>/dev/null || { rm -f "$T/$NAME" 2>/dev/null; failed "the stick did not take the finished file"; }
 trap - EXIT
 echo "stick-report: wrote $NAME"
 exit 0
