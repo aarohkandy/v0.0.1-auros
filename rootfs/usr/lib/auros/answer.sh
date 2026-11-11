@@ -433,36 +433,59 @@ case "$word" in
     # fixed program that takes nothing but the mount folder, which it checks
     # again is a removable USB disk (stick-report). Nothing is armed, nothing
     # on the stick is deleted: it adds one text file.
+    #
+    # EVERY STEP THAT TOUCHES THE STICK HAS A CLOCK. This unit is a oneshot with
+    # no start timeout (the import and the copy of her files may take hours), and
+    # a stick that is dying answers blkid, mount or umount never: without a limit
+    # every later Yes or No would queue behind it. (A step stuck inside the kernel
+    # cannot be killed by anything; the limit is for the ones that can.)
     FERRY=${AUROS_FERRY:-/usr/bin/ferry}
     REPORTER=${AUROS_REPORTER:-/usr/lib/auros/stick-report}
     RMNT=${AUROS_REPORT_MNT:-/run/ferry/report}
+    step() { timeout -k 5 "${AUROS_REPORT_STEP:-60}" "$@"; }
+    slow() { [ "$1" = 124 ] || [ "$1" = 137 ]; }
+    lst=; lrc=0
+    [ ! -x "$FERRY" ] || { lst=$(step "$FERRY" stick list 2>/dev/null); lrc=$?; }
     if [ ! -x "$REPORTER" ] || [ ! -x "$FERRY" ]; then
         say "result=failed"
         say "note=this image has no way to save a report on a USB stick"
-    elif [ -z "$sdev" ] || ! "$FERRY" stick list 2>/dev/null | cut -f1 | grep -qxF "$sdev"; then
+    elif slow "$lrc"; then
+        say "result=failed"; say "code=$lrc"; say "why=unopened"
+        say "note=the USB stick did not answer in time, so no report was saved"
+    elif [ -z "$sdev" ] || ! printf '%s\n' "$lst" | cut -f1 | grep -qxF "$sdev"; then
         say "result=failed"
         say "why=nostick"
         say "note=that USB stick is not there any more"
     else
-        case "$(blkid -o value -s TYPE "$sdev" 2>/dev/null)" in
+        case "$(step blkid -o value -s TYPE "$sdev" 2>/dev/null)" in
             exfat) rfs=exfat ;; vfat) rfs=vfat ;; ntfs) rfs=ntfs-3g ;; *) rfs= ;;
         esac
         mkdir -p "$RMNT" 2>/dev/null
         # a leftover mount from a report that could not let go must not get a second one on top
-        if mountpoint -q "$RMNT" 2>/dev/null; then ${AUROS_REPORT_UMOUNT:-umount} "$RMNT" 2>/dev/null; fi
-        if mountpoint -q "$RMNT" 2>/dev/null || [ -z "$rfs" ] || ! ${AUROS_REPORT_MOUNT:-mount} -t "$rfs" -o rw,noatime,nosuid,nodev,noexec,umask=022 "$sdev" "$RMNT" 2>/dev/null; then
+        if step mountpoint -q "$RMNT" 2>/dev/null; then step ${AUROS_REPORT_UMOUNT:-umount} "$RMNT" 2>/dev/null; fi
+        if step mountpoint -q "$RMNT" 2>/dev/null || [ -z "$rfs" ] || ! step ${AUROS_REPORT_MOUNT:-mount} -t "$rfs" -o rw,noatime,nosuid,nodev,noexec,umask=022 "$sdev" "$RMNT" 2>/dev/null; then
             say "result=failed"
             say "why=unopened"
             say "note=AurOS could not open the USB stick to save the report"
         else
-            timeout "${AUROS_REPORT_LIMIT:-300}" "$REPORTER" "$RMNT" >>"$LOG" 2>&1
+            timeout -k 10 "${AUROS_REPORT_LIMIT:-300}" "$REPORTER" "$RMNT" >>"$LOG" 2>&1
             rrc=$?
-            sync -f "$RMNT" 2>/dev/null
-            ${AUROS_REPORT_UMOUNT:-umount} "$RMNT" 2>/dev/null
+            # "Safe to take the stick out" is said only when the flush and the let-go BOTH worked.
+            flrc=0; step sync -f "$RMNT" 2>/dev/null || flrc=$?
+            umrc=0; step ${AUROS_REPORT_UMOUNT:-umount} "$RMNT" 2>/dev/null || umrc=$?
             case "$rrc" in
-              0) say "result=ok" ;;
+              0) if [ "$flrc" = 0 ] && [ "$umrc" = 0 ]; then
+                     say "result=ok"
+                 else
+                     say "result=failed"; say "code=$((umrc != 0 ? umrc : flrc))"; say "why=unclosed"
+                     say "note=the report may not be on the USB stick, because AurOS could not finish writing to it. Leave the stick in and try again"
+                 fi ;;
               3) say "result=failed"; say "code=3"; say "why=notstick"
                  say "note=that is not a USB stick AurOS can save a report on" ;;
+              4) say "result=failed"; say "code=4"; say "why=noroom"
+                 say "note=there is not enough room on the USB stick for the report; no report was saved" ;;
+              124|137) say "result=failed"; say "code=$rrc"
+                 say "note=saving the report took far too long and was stopped; no report was saved" ;;
               *) say "result=failed"; say "code=$rrc"
                  say "note=the report could not be saved on the USB stick" ;;
             esac
