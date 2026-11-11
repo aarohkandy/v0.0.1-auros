@@ -113,8 +113,9 @@ static int windows_shown(shell_ctx *c, const shell_layout *L, int *beside)
 
 static int fake_pid_state;          /* what the pretend process is doing: a PROC_* */
 static int fake_proc(shell_ctx *c, int pid) { (void)c; (void)pid; return fake_pid_state; }
+static int spawns;                  /* how many times the host was asked to start something */
 static int spawn_pid(shell_ctx *c, const char *argv_blob, int n_args)
-{ (void)c; (void)argv_blob; (void)n_args; return 4242; }
+{ (void)c; (void)argv_blob; (void)n_args; spawns++; return 4242 + spawns; }
 
 static int says(const shell_ctx *c, int i, const char *words)
 { return strstr(c->wins[i].subtitle, words) != NULL; }
@@ -226,6 +227,64 @@ static void slow_programs(const char *id, const shell_layout *L, shell_ctx *c)
     settle(c, L);
     check(id, "...and if it comes after that, it still takes the card: one entry", c->n_wins == 1 && j == i && !says_failure(c, 0), c->wins[0].subtitle);
     closes_to_home(id, c, L, "...Close this: Home");
+    if (L->fini) L->fini(c);
+
+    /* PRESSED AGAIN. A card that says it did not start starts the program again, in place; a card whose
+     * program is still running is only raised (no second browser). */
+    seed(c, id, 0); c->spawn = spawn_pid; c->proc = fake_proc; spawns = 0;
+    if (L->init) L->init(c);
+    fake_pid_state = PROC_RUNNING;
+    i = press(c, L, 2);
+    shell_start_tick(c, i, T0);
+    fake_pid_state = PROC_FAILED;
+    shell_start_tick(c, i, T0 + 4000);
+    check(id, "it died: the card says so", says(c, i, "This did not start"), c->wins[i].subtitle);
+    j = press(c, L, 2);                                     /* the old process is gone while she presses */
+    fake_pid_state = PROC_RUNNING;                          /* the new one, once it is started */
+    snprintf(why, sizeof why, "slot %d vs %d, %d entries, %d starts, '%s'", j, i, c->n_wins, spawns, c->wins[i].subtitle);
+    check(id, "pressed again after 'did not start': started again, in the same card",
+          j == i && c->n_wins == 1 && spawns == 2 && c->wins[i].starting && says(c, i, "Starting"), why);
+    check(id, "...and in front", c->focus == i, "the focus is elsewhere");
+    shell_start_tick(c, i, T0 + 5000);
+    shell_start_tick(c, i, T0 + 40000);
+    check(id, "...and it waits afresh (no failure words from the first try)", !says_failure(c, i), c->wins[i].subtitle);
+    j = shell_window_arrived(c, L, 2, 100, 0);
+    check(id, "...its window comes: one entry", c->n_wins == 1 && j == i, "two entries");
+    closes_to_home(id, c, L, "...Close this: Home");
+    if (L->fini) L->fini(c);
+
+    seed(c, id, 0); c->spawn = spawn_pid; c->proc = fake_proc; spawns = 0;
+    if (L->init) L->init(c);
+    fake_pid_state = PROC_HANDED_OFF;
+    i = press(c, L, 2);
+    shell_start_tick(c, i, T0);
+    shell_start_tick(c, i, T0 + START_HANDOFF_MS + 1000);
+    check(id, "a launcher handed off and nothing came in five minutes: the card says so", says(c, i, "This did not start"), c->wins[i].subtitle);
+    j = press(c, L, 2);
+    check(id, "pressed again: started again, in the same card", j == i && c->n_wins == 1 && spawns == 2 && c->wins[i].starting, c->wins[i].subtitle);
+    if (L->fini) L->fini(c);
+
+    seed(c, id, 0); c->spawn = spawn_pid; c->proc = fake_proc; spawns = 0;
+    if (L->init) L->init(c);
+    fake_pid_state = PROC_RUNNING;
+    i = press(c, L, 2);
+    shell_start_tick(c, i, T0);
+    shell_start_tick(c, i, T0 + 30000);
+    j = press(c, L, 2);
+    check(id, "pressed again while it is still starting (running): raised, not started again",
+          j == i && c->n_wins == 1 && spawns == 1 && says(c, i, "Still starting"), why);
+    shell_start_tick(c, i, T0 + START_STUCK_MS + 1000);
+    j = press(c, L, 2);
+    check(id, "...even after ten minutes ('still not open'): the program is still there, so no second copy",
+          j == i && c->n_wins == 1 && spawns == 1 && !says_failure(c, i), c->wins[i].subtitle);
+    /* a give-up card whose process turns out to be running after all is raised too */
+    fake_pid_state = PROC_HANDED_OFF;
+    c->wins[i].starting = 0;
+    snprintf(c->wins[i].subtitle, sizeof c->wins[i].subtitle, "This did not start");
+    fake_pid_state = PROC_RUNNING;
+    j = press(c, L, 2);
+    check(id, "a card that gave up, whose process is running after all: raised, not started again",
+          j == i && spawns == 1 && !c->wins[i].starting, c->wins[i].subtitle);
     if (L->fini) L->fini(c);
 
     /* Another program's window never takes this card. */

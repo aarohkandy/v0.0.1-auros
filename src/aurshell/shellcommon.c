@@ -987,23 +987,42 @@ int shell_launch(shell_ctx *c, int app)
 
     /* Already running and not adopted-away: raise rather than start a
      * second copy. Most applications are single-instance anyway and
-     * would silently do nothing, which looks like a broken icon. */
-    for (int i = 0; i < c->n_wins; i++)
-        if (c->wins[i].app == app) {
-            c->wins[i].minimised = 0;
+     * would silently do nothing, which looks like a broken icon.
+     *
+     * EXCEPT a card that says it did not start: its program has gone and never
+     * showed a window, so raising it did nothing she could see, and she pressed
+     * Internet again and again. That card starts the program again, in place --
+     * one entry, back to "Starting..." -- unless the process is somehow still
+     * there, which is raised as ever (no second copy of a browser). */
+    int i = -1;
+    for (int j = 0; j < c->n_wins; j++)
+        if (c->wins[j].app == app) { i = j; break; }
+    if (i >= 0) {
+        win_entry *d = &c->wins[i];
+        int dead = !d->wid && !d->starting && c->spawn && c->apps[app].exec[0] &&
+                   !(c->proc && d->pid > 0 && c->proc(c, d->pid) == PROC_RUNNING);
+        if (!dead) {
+            d->minimised = 0;
             c->focus = i;
             return i;
         }
-
-    if (c->n_wins >= SHELL_MAX_WINS) return -1;
-    int i = c->n_wins++;
+        d->minimised = 0;
+        d->starting = 1;
+        d->start_ms = 0;
+        d->pid = 0;
+        copy_str(d->subtitle, sizeof d->subtitle, "Starting…");
+        c->focus = i;
+    } else {
+        if (c->n_wins >= SHELL_MAX_WINS) return -1;
+        i = c->n_wins++;
+        memset(&c->wins[i], 0, sizeof c->wins[i]);
+        c->wins[i].app = app;
+        c->wins[i].starting = 1;
+        copy_str(c->wins[i].title,    sizeof c->wins[i].title,    c->apps[app].name);
+        copy_str(c->wins[i].subtitle, sizeof c->wins[i].subtitle, "Starting…");
+        c->focus = i;
+    }
     win_entry *w = &c->wins[i];
-    memset(w, 0, sizeof *w);
-    w->app = app;
-    w->starting = 1;
-    copy_str(w->title,    sizeof w->title,    c->apps[app].name);
-    copy_str(w->subtitle, sizeof w->subtitle, "Starting…");
-    c->focus = i;
 
     if (c->spawn && c->apps[app].exec[0]) {
         int rc = c->spawn(c, c->apps[app].exec, c->apps[app].n_args);
