@@ -293,6 +293,9 @@ jobs:
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           { sh tools/stickreporttest.sh && sh tools/stickreporttest.sh mutants; } 2>&1 | tee transcripts/stickreporttest.txt
+      - name: answerreporttest (what answering a report request says: ok only when written, flushed and let go of; a hung step is stopped)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/answerreporttest.sh 2>&1 | tee transcripts/answerreporttest.txt
       - name: choicestest
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |

@@ -14,10 +14,14 @@
 #    - it refuses a target that is not removable, not a mount point, not
 #      absolute, strange, or given with a second argument -- and writes nothing;
 #    - a planted psk= line, serial number, UUID, MAC address, host name, file
-#      name under /home and network name are NOT in the report;
+#      name under /home (with spaces in it, too) and network name (in any
+#      case) are NOT in the report; the shipped account and host name "auros"
+#      are (auros-answer.service stays readable);
 #    - the NetworkManager connection files are never opened;
 #    - the journals are capped at 4000 lines each;
-#    - every thing the brief lists is in it, the top says what is and is not.
+#    - every thing the brief lists is in it, the top says what is and is not;
+#    - a stick that cannot flush, or is full, is a failure (exit 1, exit 4);
+#      the file never goes over or through a name already on the stick.
 #  Not proved: the real journalctl/lspci/nmcli on a real PC (homebase VM tests
 #  run the script on a loop-mounted exFAT image; see the lane notes).
 # ═══════════════════════════════════════════════════════════════════
@@ -58,17 +62,21 @@ uuid no longer redacted|s/\{8\}-/{9}-/
 mac no longer redacted|s/\)\{5\}/){9}/
 host name no longer removed|s/length\(host\) > 3/length(host) > 300/
 home path no longer removed|s,'s#/home/,'s#/nohome/,
+home path stops at a space|s,'s#/home/\.\*#,'s#/home/[^ "]*#,
+media path stops at a space|s,\(/run/media\|/media\)/\.\*#,(/run/media|/media)/[^ "]*#,
 journal not capped|s/-n "\$LINES_MAX" --no-pager/--no-pager/
 network name asked for|s/-f DEVICE,TYPE,STATE //
 connection files read|s/^sec "AurOS version"/cat "$R"\/etc\/NetworkManager\/system-connections\/*; sec "AurOS version"/
 account names kept|s/BEGIN \{ np = split\(people, who, ":"\);/BEGIN { np = 0;/
+usual account name removed too|s/if \(tolower\(\$1\) != "auros"\) print \$1/print $1/
 usual host name removed too|s/^\[ "\$HOST" != auros \] \|\| HOST=/:/
 serial8250 label too wide|s/lab\(l, K2, "\[a-z_ #\.\\"-\]"\)/lab(l, K2, "[a-z0-9_ #.\\"-]")/
 oldest lines kept past the limit|s/tail -c "\$JOURNAL_MAX" "\$_t" \| sed 1d/head -c "$JOURNAL_MAX" "$_t"/
 interval braces in awk|s/pos = 1$/pos = 1; if (match(l, "x{1}")) pos = 1/
 saved Wi-Fi names not collected|s/NAME,TYPE connection show/NAME,TYPE connection foo/
 Wi-Fi names in range not collected|s/nmcli -t -f SSID device wifi list --rescan no/true/
-names cut as patterns, not plain text|s/\(i = index\(s, w\)\) > 0/(i = match(s, w) ? RSTART : 0) > 0/
+names cut as patterns, not plain text|s/\(i = index\(l, lw\)\) > 0/(i = match(l, lw) ? RSTART : 0) > 0/
+names cut only in the case they were written|s/lw = tolower\(w\); l = tolower\(s\);/lw = w; l = s;/
 ssid label values no longer cut|s/^        \$0 = ssids\(\$0\)/        $0 = $0/
 wired connection names taken too|s/wireless\|wifi/wireless|wifi|ethernet/
 colon escape not undone|s/if \(c == "\\\\" && length\(s\) > 1\)/if (0)/
@@ -76,7 +84,16 @@ header promises passwords are taken out|s/Wi-Fi passwords are never read, and/Pa
 planted link written through (no rm, no new file)|s/^rm -f "\$PART" "\$PART.cut"$/:/;s/^\(set -C; : > "\$PART"\) \|\| .*$/:/
 half report accepted|s/^\[ "\$\(tail -n 1 "\$PART".*$/[ -s "$PART" ] \\/
 TERM not trapped|s/^trap 'exit 1' TERM INT HUP$/:/
-header promises no file names|s/paths under \/home and the media folders are replaced, so the names of her files there are gone/no file names, and nothing from the folders under \/home/
+header promises no file names|s/paths under \/home and the media folders are replaced, with the rest of that line, so the names of her files there are gone/no file names, and nothing from the folders under \/home/
+header promises the installer record again|s/the choices made when AurOS was installed$/the choices made when AurOS was installed, and the installer's own record/
+installer record read again|s/^filesec "Installer choices.*$/&\nfilesec "Installer's record (journal.json)" "$R\/aurbridge\/journal.json"/
+first flush failure ignored|s/^sync -f "\$T" 2>\/dev\/null \|\| failed "the stick did not take what was written"/sync -f "$T" 2>\/dev\/null || true/
+second flush failure ignored|s/^sync -f "\$T" 2>\/dev\/null \|\| \{ rm.*$/sync -f "$T" 2>\/dev\/null || true/
+flush failure hidden by a bare sync|s/^sync -f "\$T" 2>\/dev\/null \|\| failed "the stick did not take what was written"/sync -f "$T" 2>\/dev\/null || sync/
+no room not told apart from a failing stick|s/\[ "\$_a" -ge 1024 \] \|\| exit 4/:/
+only the first free name looked for|s/^while \[ -e "\$T\/\$NAME" \] \|\| \[ -L "\$T\/\$NAME" \]; do/if [ -e "$T\/$NAME" ]; then/;s/^done$/fi/
+a link to nowhere counts as free|s/ \|\| \[ -L "\$T\/\$NAME" \]//
+moved into a folder if there is one|s/mv -fT /mv -f /
 no list of what is left out|s/WHAT IS NOT IN IT, ON PURPOSE/WHAT/
 EOF
     [ "$mfail" = 0 ] && { echo "  every check goes red when its thing is broken"; exit 0; }
@@ -104,7 +121,8 @@ EOF
 cat > "$BIN/getent" <<'EOF'
 #!/bin/sh
 echo "root:x:0:0:root:/root:/bin/sh"
-echo "granny:x:1000:1000:Rosalind Quill,,,:/home/granny:/bin/sh"
+echo "auros:x:1000:1000:AurOS,,,:/home/auros:/bin/sh"
+echo "granny:x:1001:1001:Rosalind Quill,,,:/home/granny:/bin/sh"
 EOF
 cat > "$BIN/journalctl" <<'EOF'
 #!/bin/sh
@@ -135,6 +153,9 @@ while [ $# -gt 0 ]; do case "$1" in -n) n=$2; shift ;; -b) b=$2; shift ;; esac; 
   echo "2026-11-10T10:00:06 h NetworkManager[1]: <info> joined PLANT:COLON-I ok"
   echo "2026-11-10T10:00:06 h NetworkManager[1]: <info> wired PLANTED-ETHERNAME-KEPT up"
   echo '{"ssid": "PLANTED-STRANGER-J", "state": 1}'
+  echo "2026-11-10T10:00:07 h NetworkManager[1]: <info> scan found planted-saved-a, Planted-Nearby-F and PLANTED-SAVED-A"
+  echo "2026-11-10T10:00:08 h app[2]: could not open /home/zed/Documents/Tax return 2024 PLANTED-SPACE-HOME.pdf: denied"
+  echo "2026-11-10T10:00:08 h app[2]: copied /run/media/zed/My Stick/Holiday photos PLANTED-SPACE-MEDIA.jpg and /media/zed/Tax return PLANTED-SPACE-MEDIA2.pdf"
 } | { if [ -n "$n" ]; then tail -n "$n"; else cat; fi; }
 EOF
 cat > "$BIN/dmesg" <<'EOF'
@@ -181,6 +202,32 @@ case "$*" in *FSTYPE*) echo "${FAKE_FS:-exfat}"; exit 0 ;; esac   # (a lie for n
 [ "$d" = "$FAKE_MNT" ] || exit 1
 echo /dev/sdb1
 EOF
+# a stick that cannot flush: the Nth call to sync fails (FAKE_SYNC_FAIL_ON=N); else sync does nothing
+cat > "$BIN/sync" <<'EOF'
+#!/bin/sh
+[ -n "${FAKE_SYNC_FAIL_ON:-}" ] || exit 0
+n=$(cat "$FAKE_SYNC_COUNT" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$FAKE_SYNC_COUNT"
+[ "$n" != "$FAKE_SYNC_FAIL_ON" ]
+EOF
+# df says how much room the stick has (FAKE_DF_AVAIL, in KiB); else the real one
+cat > "$BIN/df" <<'EOF'
+#!/bin/sh
+[ -n "${FAKE_DF_AVAIL:-}" ] || exec /usr/bin/df "$@"
+echo "Filesystem 1024-blocks Used Available Capacity Mounted on"
+echo "/dev/sdb1 1000 1000 $FAKE_DF_AVAIL 100% /stick"
+EOF
+# the time of day is fixed, so the second name is known: 120000
+cat > "$BIN/date" <<'EOF'
+#!/bin/sh
+case "$*" in *%H%M%S*) echo 120000 ;; *) exec /usr/bin/date "$@" ;; esac
+EOF
+# FAKE_MV_RACE=DIR: a link to DIR appears at the final name just before the move (a stick written to meanwhile)
+cat > "$BIN/mv" <<'EOF'
+#!/bin/sh
+for a; do last=$a; done
+case $last in *.part|*.cut) ;; *AurOS-report-*.txt) [ -z "${FAKE_MV_RACE:-}" ] || ln -s "$FAKE_MV_RACE" "$last" ;; esac
+exec /usr/bin/mv "$@"
+EOF
 chmod 755 "$BIN"/*
 
 cat > "$ROOT/usr/lib/os-release" <<'EOF'
@@ -188,6 +235,7 @@ NAME="AurOS"
 PRETTY_NAME="AurOS 0.1.0 OSRELEASE-MARKER"
 EOF
 printf 'language=en_US.UTF-8\nshell=taskbar\nwifi_psk=PLANTED-CONF-PSK\n' > "$ROOT/etc/auros/installer-choices.conf"
+# the staging environment's journal lives in the installer's memory, never on an installed PC: not read
 printf '{"image_on":"stick","disk_serial":"PLANTED-JOURNAL-SERIAL","profile":"JOURNAL-MARKER"}\n' > "$ROOT/aurbridge/journal.json"
 printf '[wifi-security]\npsk=NM-FILE-MUST-NEVER-BE-READ\n' > "$ROOT/etc/NetworkManager/system-connections/HomeNet.nmconnection"
 
@@ -224,7 +272,7 @@ F=$(ls "$STICK"/AurOS-report-*.txt 2>/dev/null | head -1)
 [ -f "$F" ] || { bad "report present"; echo "  cannot go on"; exit 1; }
 has() { grep -q -- "$1" "$F"; }
 for m in OSRELEASE-MARKER UNAME-MARKER KERNEL-LOG-MARKER LSPCI-MARKER LSUSB-MARKER RFKILL-MARKER APLAY-MARKER \
-         JOURNAL-MARKER "wlan0:wifi:connected" "language=en_US" "sdb1 16G" "JOURNAL-BOOT0" "JOURNAL-BOOT-1"; do
+         "wlan0:wifi:connected" "language=en_US" "sdb1 16G" "JOURNAL-BOOT0" "JOURNAL-BOOT-1"; do
     has "$m" && ok "it holds: $m" || bad "it holds: $m"
 done
 
@@ -237,10 +285,16 @@ has "PLANTEDxED-REGEX-KEPT" && ok "a name with .*[ is plain text (a look-alike l
 has "PLANTED-ETHERNAME-KEPT" && ok "only Wi-Fi connection names are taken (a wired one is kept)" || bad "only Wi-Fi connection names are taken"
 has "wlan0: Trying to associate with SSID '\[removed\]'" && ok "...the line is there, with the name removed" || bad "the SSID line is marked removed"
 for m in PLANTED-WIFI-PASSWORD-1 PLANTED-SERIAL-2 PLANTED-SERIAL-3 PLANTED-TAXES 123e4567 aa:bb:cc:dd:ee:ff \
-         PLANTED-CONF-PSK PLANTED-JOURNAL-SERIAL granny Quill PLANTED-SSID NM-FILE-MUST-NEVER-BE-READ grandmas-laptop; do
+         PLANTED-CONF-PSK PLANTED-JOURNAL-SERIAL JOURNAL-MARKER granny Quill PLANTED-SSID NM-FILE-MUST-NEVER-BE-READ grandmas-laptop \
+         PLANTED-SPACE-HOME PLANTED-SPACE-MEDIA "return 2024" "Holiday photos" "My Stick"; do
     has "$m" && bad "it must NOT hold: $m" || ok "it does not hold: $m"
 done
 has "psk= \[removed\]" && ok "...the psk line is there, with its value removed" || bad "the psk line is marked removed"
+has "could not open /home/\[removed\]$" && has "copied /run/media/\[removed\]$" && ok "...a path with spaces is cut to the end of its line, after the prefix" || bad "a path with spaces is cut to the end of its line"
+grep -qi "planted-saved-a\|planted-nearby-f" "$F" && bad "a Wi-Fi name in another case (mynet, MYNET) is taken out too" || ok "a Wi-Fi name in another case (mynet, MYNET) is taken out too"
+has "systemd\[1\]: auros-answer.service: /usr/lib/auros/answer.sh AUROSUNIT-MARKER" && has "--- /etc/auros/installer-choices.conf" && ok "the shipped account auros is not a person: auros-answer.service and /etc/auros stay" || bad "the shipped account auros is left alone"
+! has "installer's own record" && ! has "journal.json" && ok "the top does not promise a record that an installed PC does not have" || bad "no installer's-record promise"
+has "A program can still write something private" && has "very short Wi-Fi name" && ok "the top still says what a filter cannot promise" || bad "the top says what a filter cannot promise"
 has "WHAT IS NOT IN IT" && has "Wi-Fi passwords are never read" && has "names of Wi-Fi networks" && ! has "no file names" && ! has "no serial numbers" && ok "the top says what is and is not in it" || bad "the top says what is not in it"
 
 echo "  what must survive the filter"
@@ -272,10 +326,38 @@ rm -f "$STICK"/AurOS-report-*.txt "$TMP/victim"; rm -rf "$STICK"/.[A-Za-z]*
 
 # a stick that fills up part-way: the write errors are hidden inside the script, so only the
 # closing line says the file is whole (ulimit -f stands in for a full stick)
-( trap '' XFSZ; ulimit -f 300; report "$STICK" >"$TMP/out4" 2>&1 ); rc=$?
-[ "$rc" != 0 ] && ok "a report cut short by a full stick is a failure (exit $rc)" || bad "a cut-short report is a failure" "rc=$rc, file $(ls -A "$STICK" | head -2 | tr '\n' ' ')"
+( trap '' XFSZ; ulimit -f 300; FAKE_DF_AVAIL=64; export FAKE_DF_AVAIL; report "$STICK" >"$TMP/out4" 2>&1 ); rc=$?
+[ "$rc" = 4 ] && ok "a report cut short because the stick has no room left is exit 4 (not enough room)" || bad "a stick with no room left is exit 4" "rc=$rc, file $(ls -A "$STICK" | head -2 | tr '\n' ' ')"
 [ "$(files_on_stick)" = 0 ] && ok "...and no half report is left on the stick" || bad "...no half report is left" "$(ls -A "$STICK" | tr '\n' ' ')"
 rm -rf "$STICK"/.[A-Za-z]* "$STICK"/AurOS-report-*.txt
+( trap '' XFSZ; ulimit -f 300; FAKE_DF_AVAIL=900000; export FAKE_DF_AVAIL; report "$STICK" >"$TMP/out4" 2>&1 ); rc=$?
+[ "$rc" = 1 ] && ok "a report cut short on a stick with room left is a plain failure (exit 1)" || bad "a cut-short report with room left is exit 1" "rc=$rc"
+rm -rf "$STICK"/.[A-Za-z]* "$STICK"/AurOS-report-*.txt
+
+# a stick that cannot flush: "written" must not be said (the 1st sync is before the move, the 2nd after it)
+for on in 1 2; do
+    rm -f "$TMP/syncs"
+    ( FAKE_SYNC_FAIL_ON=$on; FAKE_SYNC_COUNT="$TMP/syncs"; export FAKE_SYNC_FAIL_ON FAKE_SYNC_COUNT; report "$STICK" >"$TMP/out5" 2>&1 ); rc=$?
+    [ "$rc" != 0 ] && ok "a flush that fails (call $on) is a failure (exit $rc), not \"wrote\"" || bad "a failed flush (call $on) is a failure" "rc=$rc $(cat "$TMP/out5")"
+    grep -q 'stick-report: wrote' "$TMP/out5" && bad "...and it does not say it wrote the file" || ok "...and it does not say it wrote the file"
+    [ "$(files_on_stick)" = 0 ] && ok "...and no report (finished or half) is left on the stick" || bad "...no report is left (call $on)" "$(ls -A "$STICK" | tr '\n' ' ')"
+    rm -rf "$STICK"/.[A-Za-z]* "$STICK"/AurOS-report-*.txt
+done
+
+# a name already on the stick is never written through or over: the first free name is used
+mkdir -p "$TMP/vdir"
+printf 'OLD\n' > "$STICK/AurOS-report-$today.txt"
+ln -s "$TMP/vdir" "$STICK/AurOS-report-$today-120000.txt"
+ln -s "$TMP/nowhere" "$STICK/AurOS-report-$today-120000-3.txt"
+report "$STICK" >"$TMP/out6" 2>&1; rc=$?
+[ "$rc" = 0 ] && [ -f "$STICK/AurOS-report-$today-120000-4.txt" ] && [ ! -L "$STICK/AurOS-report-$today-120000-4.txt" ] && ok "taken names (a file, a link to a folder, a link to nowhere): the first free one is used" || bad "the first free name is used" "rc=$rc $(ls -A "$STICK" | tr '\n' ' ')"
+[ -z "$(ls -A "$TMP/vdir")" ] && ok "...nothing was moved into the folder a link on the stick points to" || bad "nothing moved into a linked folder" "$(ls -A "$TMP/vdir")"
+[ "$(cat "$STICK/AurOS-report-$today.txt")" = OLD ] && [ -L "$STICK/AurOS-report-$today-120000-3.txt" ] && ok "...and the older report and the dangling link are untouched" || bad "older names untouched"
+rm -rf "$STICK"/.[A-Za-z]* "$STICK"/AurOS-report-*.txt
+# ...and at the last moment: a link to a folder appears at the chosen name (the stick is written to meanwhile)
+( FAKE_MV_RACE="$TMP/vdir"; export FAKE_MV_RACE; report "$STICK" >"$TMP/out7" 2>&1 ); rc=$?
+[ -z "$(ls -A "$TMP/vdir")" ] && ok "a folder link that appears just before the move receives nothing (the move is of a file, not into a folder)" || bad "a late folder link receives nothing" "rc=$rc $(ls -A "$TMP/vdir")"
+rm -rf "$STICK"/.[A-Za-z]* "$STICK"/AurOS-report-*.txt "$TMP/vdir"
 
 # timeout sends TERM; dash does not run an EXIT trap then, so the script must trap TERM itself
 if command -v dash >/dev/null 2>&1; then
