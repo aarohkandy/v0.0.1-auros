@@ -155,7 +155,8 @@ sh "$FERRY/../../rootfs/usr/lib/auros/home-folders" "$HF"
 hers "$HF"
 HFS="$TMP/state-hf"
 FERRY_STATE="$HFS" ferry-files --root "$WIN" --home "$HF" --owner "$OWNER" >/dev/null 2>&1; HFRC=$?
-eq "ferry-files runs to the end over folders that already exist" "$HFRC" 0
+# 2 is the answer for this fake tree whatever the home: its Videos are on drive D: (off-volume, skipped).
+eq "ferry-files runs to the end over folders that already exist (2: Videos is on another drive)" "$HFRC" 2
 assert "...Documents: her letter lands in the folder the desktop made" test -f "$HF/Documents/letter.docx"
 assert "...Desktop: so does her Windows desktop" test -f "$HF/Desktop/report.docx"
 eq "...and there is one Documents, not two" "$(ls -d "$HF"/Doc* | wc -l | tr -d ' ')" 1
