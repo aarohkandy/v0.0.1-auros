@@ -996,6 +996,14 @@ EOL
     # translations, so a French build shows "Photos" and "Your files"
     # rather than the packager's French. "Photos" is a French word.
     # "Visionneur de documents Atril" is not a name anyone uses.
+    #
+    # THE LINE IS KEPT SHORT (40 characters), because the list draws it only where it fits whole
+    # (src/aurshell/layouts/rail.c: half a sentence is worse than none) -- so a packager's
+    # "Create and edit presentations for slideshows, meetings and Web pages." or a 70-character
+    # Comment is not shortened, it is simply not there, and the row reads as a program nobody
+    # described. A program a PROFILE adds (the office's Draw, Impress, scanner and password
+    # safe) needs a row here to be named and described like the rest; tools/renametest.sh
+    # refuses a line that would not fit.
     install -d "$RFS/usr/local/share/applications"
     while IFS='|' read -r desk nm cm; do
         [ -n "$desk" ] || continue
@@ -1025,6 +1033,10 @@ org.gnome.Software|Get more programs|Find and add programs
 libreoffice-writer|Letters|Write a letter, or open a Word file
 libreoffice-calc|Spreadsheets|Numbers in tables, or open an Excel file
 sol|Solitaire|Play cards
+libreoffice-draw|Drawings|Make a drawing or a diagram
+libreoffice-impress|Presentations|Make slides, or open a PowerPoint file
+simple-scan|Scanner|Scan a page or a photo
+org.keepassxc.KeePassXC|Passwords|Keep your passwords safe (KeePassXC)
 EOL
 
     # Tools that are installed because something needs them (or because the package

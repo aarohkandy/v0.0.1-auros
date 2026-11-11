@@ -151,6 +151,7 @@ done
 echo
 echo "and is each program called something she would recognise?"
 RENAMES=$(awk "/^thunar\\|/,/^EOL$/" "$FORGE" | grep -E '^[a-zA-Z0-9._-]+\|')
+PROFILE_ONLY="libreoffice-draw libreoffice-impress simple-scan org.keepassxc.KeePassXC"
 rn_fail=0
 if [ -z "$RENAMES" ]; then
     echo "  could not find the rename table in $FORGE"
@@ -160,6 +161,11 @@ else
         if [ -f "$APPS/$line.desktop" ]; then
             printf '  %-42s %s\n' "$line" "installed"
         else
+            # Rows for programs only some PROFILES add (the office's Draw, Impress, scanner and password safe)
+            # rename nothing on a build that does not ship them, and that is not a mistake.
+            case " $PROFILE_ONLY " in
+                *" $line "*) printf '  %-42s %s\n' "$line" "not in this build (a profile adds it)"; continue ;;
+            esac
             printf '  %-42s %s\n' "$line" "NOT INSTALLED -- this line renames nothing"
             rn_fail=$((rn_fail + 1))
         fi
