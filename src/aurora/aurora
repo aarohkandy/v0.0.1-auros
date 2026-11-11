@@ -228,11 +228,44 @@ render_all() {
                 info "WARNING $(basename "$_t"): unresolved $m"
             done
         fi
-        mv "$_out.tmp" "$_out" || die "cannot replace $_out"
-        chmod "$_mode" "$_out"
+        # NOT moved into place yet: see stage_commit.
+        chmod "$_mode" "$_out.tmp"
+        printf '%s\n' "$_out" >> "$STAGE"
         _count=$((_count+1))
     done
     info "rendered $_count templates"
+}
+
+# ── A theme is applied ALL AT ONCE OR NOT AT ALL.
+#
+# Everything cmd_set makes is first written beside its destination as
+# NAME.tmp and listed in $STAGE; only when every file AND the wallpaper
+# have been made are they moved into place, and the note of which theme
+# is current is written last. This used to move each file the moment it
+# was rendered and write the note at the very end, after a wallpaper
+# that takes seconds on an old computer. A caller that gave up in that
+# time (Settings used to kill it at 2.5 s) left a new shell.conf beside
+# a note that still named the old theme: Settings said Slate, and the
+# next thing that reloaded the desktop -- changing how it works, for one
+# -- drew it in the other theme's colours, for good.
+STAGE=""
+stage_clean() {
+    [ -n "$STAGE" ] && [ -f "$STAGE" ] || return 0
+    while IFS= read -r _o; do rm -f "$_o.tmp"; done < "$STAGE"
+    rm -f "$STAGE"
+}
+stage_commit() {
+    # The desktop's own file goes last of the files, so what it reads
+    # never runs ahead of the programs' colours it goes with.
+    while IFS= read -r _o; do
+        case "$_o" in */shell.conf) continue ;; esac
+        if [ -f "$_o.tmp" ]; then mv -f "$_o.tmp" "$_o" || die "cannot replace $_o"; fi
+    done < "$STAGE"
+    while IFS= read -r _o; do
+        case "$_o" in
+            */shell.conf) mv -f "$_o.tmp" "$_o" || die "cannot replace $_o" ;;
+        esac
+    done < "$STAGE"
 }
 
 cmd_list() {
@@ -299,17 +332,27 @@ cmd_validate() {
 cmd_set() {
     _n=${1:?usage: aurora set NAME}
     cmd_validate "$_n" >/dev/null || die "refusing to apply an incomplete theme"
+    mkdir -p "$STATE" "$CACHE"
+    STAGE=$(mktemp "$STATE/.aurora-stage.XXXXXX") || die "cannot stage the change in $STATE"
+    trap stage_clean EXIT
+    trap 'exit 143' HUP INT TERM
     ( load_theme "$_n"
       export_theme
-      mkdir -p "$STATE" "$CACHE"
       render_all
       # Procedural wallpaper — generated from the theme, never a file on disk.
       if command -v aurwall >/dev/null 2>&1; then
-          aurwall --theme "$THEME_DIR/$_n.theme" --out "$CACHE/wallpaper.png" \
-              >/dev/null 2>&1 && info "wallpaper regenerated"
+          if aurwall --theme "$THEME_DIR/$_n.theme" --out "$CACHE/wallpaper.png.tmp" \
+                 >/dev/null 2>&1; then
+              printf '%s\n' "$CACHE/wallpaper.png" >> "$STAGE"
+              info "wallpaper regenerated"
+          else
+              rm -f "$CACHE/wallpaper.png.tmp"
+          fi
       fi
     )
-    printf '%s\n' "$_n" > "$ACTIVE"
+    stage_commit
+    rm -f "$STAGE"
+    printf '%s\n' "$_n" > "$ACTIVE.tmp" && mv -f "$ACTIVE.tmp" "$ACTIVE" || die "cannot record the theme"
     # Live reload: repaint the TTY palette and poke the shell if running.
     [ -f "$STATE/console.sh" ] && . "$STATE/console.sh" 2>/dev/null || :
     if [ -S /run/auros/shell.sock ]; then

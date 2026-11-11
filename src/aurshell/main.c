@@ -1962,6 +1962,8 @@ int main(int argc, char **argv)
         if (ww >= 0 && ww < wait_ms) wait_ms = ww;
         int aw = appwatch_wait_ms();
         if (aw >= 0 && aw < wait_ms) wait_ms = aw;
+        int sw = settings_wait_ms();      /* a colour change being made, on her Colors page */
+        if (sw >= 0 && sw < wait_ms) wait_ms = sw;
         int wsw = wish_wait_ms();
         if (wsw >= 0 && wsw < wait_ms) wait_ms = wsw;
         if (np > (int)(sizeof pfd / sizeof pfd[0])) {

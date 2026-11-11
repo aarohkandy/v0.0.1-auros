@@ -234,6 +234,58 @@ done < "$STATE/defaults"
 #    failure on the first real image build. This runs aurora twice with
 #    `awk` pointed at each, rather than trusting whichever is default.
 echo
+echo "a theme is applied all at once or not at all"
+# Settings used to kill aurora after 2.5 s -- after it had written her new shell.conf and before it
+# had written the note of which theme that was (the wallpaper in between takes seconds on an old
+# computer). Her desktop then read the new colours at the next reload while Settings went on
+# saying the old theme. Whatever stops aurora, at any point before the end, must leave exactly what
+# was there: shell.conf, the programs' colours, the wallpaper AND the note, and nothing half-made.
+atomic() {
+    A=$(mktemp -d); mkdir -p "$A/bin" "$A/cache"
+    printf '#!/bin/sh\nsleep 30\n' > "$A/bin/aurwall"; chmod +x "$A/bin/aurwall"
+    export AURORA_OUTDIR="$A" AURORA_ONLY="shell.conf gtk.css" AURORA_STATE="$A" AURORA_CACHE="$A/cache"
+    $AURORA set nocturne >/dev/null 2>&1
+    before=$(cat "$A/shell.conf" "$A/gtk/gtk.css" "$A/theme" | md5sum)
+    PATH="$A/bin:$PATH" setsid $AURORA set slate >/dev/null 2>&1 &
+    pid=$!
+    sleep 1.5
+    kill "-$1" "-$pid" 2>/dev/null || :   # its whole session, as Settings stops it
+    sleep 1
+    kill -KILL "-$pid" 2>/dev/null || :
+    after=$(cat "$A/shell.conf" "$A/gtk/gtk.css" "$A/theme" | md5sum)
+    checked=$((checked + 1))
+    if [ "$before" = "$after" ] && grep -q "theme_name        = Light writing on a dark background" "$A/shell.conf" && [ "$(cat "$A/theme")" = nocturne ]; then
+        echo "  ok    stopped with $1 during the wallpaper: shell.conf, gtk.css and the note all still say the dark one"
+    else
+        echo "  FAIL  stopped with $1 during the wallpaper: her files changed ($(grep theme_name "$A/shell.conf"), note $(cat "$A/theme"))"
+        fail=1
+    fi
+    if [ "$1" = TERM ]; then
+        checked=$((checked + 1))
+        if ls -A "$A" "$A/gtk" "$A/cache" 2>/dev/null | grep -q '\.tmp$\|aurora-stage'; then
+            echo "  FAIL  stopped with TERM: half-made files left behind"; fail=1
+        else
+            echo "  ok    ...and nothing half-made is left behind"
+        fi
+    fi
+    unset AURORA_OUTDIR AURORA_ONLY
+    export AURORA_STATE="$STATE" AURORA_CACHE="$STATE/cache"
+    rm -rf "$A"
+}
+atomic TERM
+atomic KILL
+# and an uninterrupted one still changes all of it together
+A=$(mktemp -d); mkdir -p "$A/cache"
+AURORA_OUTDIR="$A" AURORA_ONLY="shell.conf gtk.css" AURORA_STATE="$A" AURORA_CACHE="$A/cache" $AURORA set slate >/dev/null 2>&1
+checked=$((checked + 1))
+if grep -q "theme_name        = Slate" "$A/shell.conf" && [ -s "$A/gtk/gtk.css" ] && [ "$(cat "$A/theme")" = slate ]; then
+    echo "  ok    uninterrupted: shell.conf, gtk.css and the note all say Slate"
+else
+    echo "  FAIL  an uninterrupted aurora set did not leave shell.conf, gtk.css and the note agreeing"; fail=1
+fi
+rm -rf "$A"
+
+echo
 echo "mawk and gawk agree"
 if command -v mawk >/dev/null 2>&1 && command -v gawk >/dev/null 2>&1; then
     shim=$(mktemp -d)

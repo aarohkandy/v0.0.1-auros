@@ -55,6 +55,15 @@ static int press(const char *words)
         }
     return 0;
 }
+/* A colour change runs to its end while the page says so (it is not waited for inside the press), so
+ * a harness gives the main loop's settings_step() its turns until nothing is left running. */
+static void settle(int seconds)
+{
+    for (int i = 0; i < seconds * 100 && settings_wait_ms() >= 0; i++) {
+        settings_step(&C);
+        usleep(10 * 1000);
+    }
+}
 static int shown(const char *words)
 {
     paint();
@@ -115,6 +124,9 @@ int main(void)
     settings_opened(&C);
     ok(press("Colors"), "\"Colors\" opens");
     ok(press("Light"), "she presses \"Light\"");
+    ok(shown("Changing the colors. An older computer can take a minute.") || settings_wait_ms() < 0,
+       "while it is being made the page says so, in words");
+    settle(20);
     char g3[600], g4[600], ini3[600], ini4[600], mine[600], want[700];
     snprintf(g3, sizeof g3, "%s/.config/gtk-3.0/gtk.css", home);
     snprintf(g4, sizeof g4, "%s/.config/gtk-4.0/gtk.css", home);
@@ -147,7 +159,7 @@ int main(void)
         C.want_reload = 0;
         ok(!settings_theme_apply(&C, "nocturne") && !C.want_reload &&
            file_has(ini3, "gtk-application-prefer-dark-theme=0\n"),
-           "a timed-out theme helper is stopped and never reported as applied");
+           "a theme helper that ends badly is never reported as applied");
         setenv("PATH", path, 1);
 
         char bad[600], badf[700], statef[700], themes[700];
@@ -168,13 +180,112 @@ int main(void)
     }
 
     ok(press("Light writing on a dark background"), "she presses the dark one");
+    settle(20);
     ok(file_has(ini3, "gtk-application-prefer-dark-theme=1\n") &&
        file_has(ini4, "gtk-application-prefer-dark-theme=1\n"), "and her programs are dark again");
 
     /* Something she wrote herself is hers. */
     put(g3, "@import url(\"file:///etc/auros/gtk/gtk.css\");\nwindow { font-size: 20px; }\n");
     ok(press("Light"), "with a gtk.css of her own, she presses \"Light\"");
+    settle(20);
     ok(file_has(g3, "font-size: 20px"), "her own gtk.css is left exactly as she wrote it");
+
+    /* A SLOW COMPUTER. Settings used to give aurora 2.5 s and then kill it -- after it had written her
+     * new shell.conf and before it had said which theme that was -- so every press said "The look
+     * could not be changed", and the next change of how the desktop works drew the half-made look.
+     * Here aurora takes 4 s (the wallpaper on a computer from 2008): the press must come back at
+     * once, the page must say what is happening, and the result must be the whole change. */
+    printf("\na slow computer: the change is waited for, whole\n");
+    {
+        char fake[700], real[700], mc[700], st[700], shc[700];
+        snprintf(real, sizeof real, "%s/src/aurora/aurora", cwd);
+        snprintf(fake, sizeof fake, "%s/slowbin", home); mkdir(fake, 0755);
+        snprintf(p, sizeof p, "%s/aurora", fake);
+        char body[1000];
+        snprintf(body, sizeof body, "#!/bin/sh\n/bin/sleep 4\nexec /bin/sh %s \"$@\"\n", real);
+        put(p, body); chmod(p, 0700);
+        char slowpath[1400];
+        snprintf(slowpath, sizeof slowpath, "%s:%s", fake, path);
+        setenv("PATH", slowpath, 1);
+
+        /* this computer was given Slate (the office profile's theme), and she has not chosen */
+        snprintf(mc, sizeof mc, "%s/machine-theme", home);
+        put(mc, "slate\n");
+        setenv("AUROS_MACHINE_THEME", mc, 1);
+        snprintf(st, sizeof st, "%s/.config/auros/theme", home);
+        snprintf(shc, sizeof shc, "%s/.config/auros/shell.conf", home);
+        unlink(st); unlink(shc);
+        C.settings_open = 0; C.settings_open = 1; settings_opened(&C);
+        press("Colors");
+        ok(shown("Slate"), "Colors names the look this computer was given: Slate");
+        ok(shown("Light") && shown("Light writing on a dark background"), "...beside Light and the dark one");
+        {
+            int slate_y = -1, now_y = -1;
+            for (int i = 0; i < shell_text_log_n; i++) {
+                if (!strcmp(shell_text_log[i].s, "Slate")) slate_y = shell_text_log[i].y;
+                if (!strcmp(shell_text_log[i].s, "Now")) now_y = shell_text_log[i].y;
+            }
+            ok(slate_y >= 0 && now_y >= 0 && now_y > slate_y - 30 && now_y < slate_y + 30,
+               "...and Slate is the one marked \"Now\"");
+        }
+        {   /* its picture too: Slate puts fg= after muted= and subtle= on one line */
+            int ly = -1, lx = -1, has_bg = 0, has_fg = 0, has_acc = 0;
+            for (int i = 0; i < shell_text_log_n; i++)
+                if (!strcmp(shell_text_log[i].s, "Slate")) { ly = shell_text_log[i].y; lx = shell_text_log[i].x; }
+            for (int y = ly - 40; y < ly + 50 && ly >= 0; y++)
+                for (int x = lx - 120; x < lx - 2; x++) {
+                    if (x < 0 || y < 0 || x >= SURF->w || y >= SURF->h) continue;
+                    unsigned px = SURF->px[y * SURF->stride + x] & 0xFFFFFFu;
+                    if (px == 0x0F1215u) has_bg = 1;
+                    if (px == 0xD5DCE4u) has_fg = 1;
+                    if (px == 0x7FA8D4u) has_acc = 1;
+                }
+            ok(has_bg && has_fg && has_acc, "...with a picture of it, in its paper, ink and signal (a slate blue)");
+        }
+        ok(press("Light"), "she presses Light on a slow computer");
+        ok(shown("Changing the colors. An older computer can take a minute."),
+           "the page says the colors are being changed, not that they could not be");
+        ok(!shown("The colors could not be changed just now. Nothing has changed."), "...and does not say it failed");
+        ok(file_has(shc, "Slate") || access(shc, F_OK) != 0, "while it runs, the desktop's file is still whole: Slate or nothing");
+        settle(30);
+        ok(shown("Now using Light."), "4 s later: \"Now using Light.\"");
+        ok(file_has(shc, "theme_name        = Light") && file_has(st, "sandstone"),
+           "shell.conf and the note of which theme it is agree");
+        ok(shown("Slate"), "Slate is still offered, to go back to");
+        ok(press("Slate"), "she presses Slate");
+        settle(30);
+        ok(shown("Now using Slate.") && file_has(shc, "theme_name        = Slate") && file_has(st, "slate"),
+           "and has the office's own look again, and Colors says so");
+
+        /* a helper that never finishes is stopped at the ceiling and leaves what she had */
+        snprintf(p, sizeof p, "%s/aurora", fake);
+        put(p, "#!/bin/sh\n/bin/sleep 30\n");
+        chmod(p, 0700);
+        setenv("AUROS_THEME_CEILING_MS", "1500", 1);
+        char before[4096] = {0};
+        { FILE *f = fopen(shc, "r"); if (f) { size_t n = fread(before, 1, sizeof before - 1, f); before[n] = 0; fclose(f); } }
+        press("Light");
+        settle(20);
+        ok(shown("That took too long, so it was stopped. Nothing has changed.") &&
+           file_has(shc, "theme_name        = Slate") && file_has(st, "slate") && settings_wait_ms() < 0,
+           "a helper that never finishes is stopped, and says so, and she keeps Slate");
+        /* N3: changing how the computer works never changes its colours (it used to, after a colour
+         * change that had been given up on: the half-made shell.conf was read at the next reload). */
+        C.settings_open = 0; C.settings_open = 1; settings_opened(&C);
+        press("How this computer works");
+        press("Like a Mac");
+        char after[4096] = {0};
+        { FILE *f = fopen(shc, "r"); if (f) { size_t n = fread(after, 1, sizeof after - 1, f); after[n] = 0; fclose(f); } }
+        ok(before[0] && !strcmp(before, after) && file_has(st, "slate"),
+           "after that, choosing Like a Mac leaves her colors exactly as they were (Slate)");
+        { char l[900]; snprintf(l, sizeof l, "%s/.config/auros/active.shell", home); unlink(l); }
+        unsetenv("AUROS_THEME_CEILING_MS");
+        setenv("PATH", path, 1);
+        unsetenv("AUROS_MACHINE_THEME");
+        unlink(st); unlink(shc);
+        /* back to the account the rest of this file expects: Light, as chosen above */
+        press("Light"); settle(20);
+    }
 
     /* The four ways the computer can work, by the names the installer and the website use (C-P0-4):
      * the names come from shells/*.shell, and the two she was never meant to stumble on
