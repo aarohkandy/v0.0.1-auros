@@ -68,7 +68,7 @@ static const char *name(int st)
 
 int main(void)
 {
-    char dir[PATH_MAX], real[PATH_MAX], out[PATH_MAX], cmd[PATH_MAX + 64], got[PATH_MAX] = "";
+    char dir[PATH_MAX], real[PATH_MAX], out[PATH_MAX + 16], cmd[2 * PATH_MAX + 64], got[PATH_MAX] = "";
     const char *tmp = getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp";
     snprintf(dir, sizeof dir, "%s/wltest-spawn-home.%d", tmp, (int)getpid());
     if (mkdir(dir, 0700) < 0) { perror(dir); return 2; }
