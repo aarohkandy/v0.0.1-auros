@@ -227,10 +227,18 @@ void        aurwl_frame_done(aurwl *c, uint32_t time_ms);
  * directly -- there is no shell. A .desktop Exec= line looks like a
  * shell command and is not one: it has its own quoting rules, and
  * handing it to /bin/sh turns every metacharacter in a file the user
- * can write into an instruction. Returns the pid, or -1. */
+ * can write into an instruction. The program starts in the account's home
+ * folder ($HOME, else the passwd entry), whatever the shell's own directory
+ * is. Returns the pid, or -1. */
 pid_t       aurwl_spawn(aurwl *c, const char *const argv[]);
 
 /* Reap exited children. Call each frame; cheap when there are none. */
 void        aurwl_reap(aurwl *c);
+
+/* How a program aurwl_spawn() started ended, once aurwl_reap() has collected
+ * it: its exit status, or 128 plus the signal that killed it. -1 when it has
+ * not been collected (still running) or was collected long enough ago to be
+ * forgotten (the last 32 are kept). */
+int         aurwl_kid_exit(const aurwl *c, pid_t pid);
 
 #endif
