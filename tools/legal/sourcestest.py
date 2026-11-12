@@ -70,6 +70,34 @@ class Archive:
         return list(parts)
 
 
+class Down:
+    """A server that is there and answers 503 to everything, counting how often it is asked.
+    With `slow`, it has every file of `slow` (an Archive) and takes its time to begin."""
+    def __init__(self, slow=None, wait=0.3):
+        self.asked = 0
+        outer = self
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a): pass
+            def do_GET(self):
+                outer.asked += 1
+                if slow is not None:
+                    import time
+                    time.sleep(wait)
+                    b = slow.files.get(self.path.replace("%3A", ":"))
+                    if b is None:
+                        self.send_response(404); self.end_headers(); return
+                    self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers()
+                    self.wfile.write(b); return
+                self.send_response(503); self.send_header("Content-Length", "0"); self.end_headers()
+            do_HEAD = do_GET
+        class Quiet(http.server.ThreadingHTTPServer):
+            def handle_error(self, request, client_address):
+                pass
+        self.srv = Quiet(("127.0.0.1", 0), H)
+        self.url = "http://127.0.0.1:%d/lp" % self.srv.server_address[1]
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+
+
 def status(pkgs):
     """pkgs: (name, version, source-header-or-None, maintainer, state)"""
     out = []
@@ -231,6 +259,32 @@ def main():
         a0 = Archive(); a0.add("foo", "1:1.2-3"); a0.add("bar", "2.0-1"); a0.add("hostglibc", "2.39-0ubuntu8.9")
         rc, o = run("plan", "--root", root, "--extra", extra, "--resolve", "--base", "lp:" + a0.url)
         check(rc != 0 and "MISSING heldsrc 3-1" in o, "plan --resolve names the source package that is not published")
+
+        # A first server that is down (Launchpad, 2026-11-12: 503 for hours) is given up on
+        # after a few files and asked once each from then on; the second server has it all.
+        many = Archive()
+        mpk = []
+        for i in range(30):
+            many.add("m%02d" % i, "1.0-1")
+            mpk.append(("m%02d" % i, "1.0-1", None, maint, "install ok installed"))
+        mroot = root_dir(tmp, mpk, name="manyroot")
+        down = Down()
+        rc, o = run("make", "--root", mroot, "--out", os.path.join(tmp, "relmany"), "--tag", "v9", "--jobs", "1",
+                    "--base", "lp:" + down.url, "--base", "lp:" + many.url, "--no-online")
+        # 30 sources of 3 files: 360 askings at four tries a file; resting, 5 x 4 and then one each
+        check(rc == 0, "a release is made from the second server when the first is down")
+        check(0 < down.asked <= 5 * 4 + 90, "...and the server that is down is asked once a file after "
+              "five failures, not four times (%d askings for 90 files)" % down.asked)
+
+        # ...and one that answers, slowly, goes to the back as well: the prompt one is asked first.
+        slow = Down(slow=many)
+        env_slow = dict(ENV, SOURCES_SLOW="0.2")
+        p = subprocess.run([sys.executable, "-I", TOOL, "make", "--root", mroot, "--out", os.path.join(tmp, "relslow"),
+                            "--tag", "v9", "--jobs", "1", "--base", "lp:" + slow.url, "--base", "lp:" + many.url,
+                            "--no-online"], capture_output=True, text=True, env=env_slow, cwd=ROOT)
+        check(p.returncode == 0 and 0 < slow.asked <= 12,
+              "a server that takes long to begin answering is left for the prompt one after five files "
+              "(%d askings for 90 files)" % slow.asked)
 
         # ── the good release ──────────────────────────────────────
         out = os.path.join(tmp, "rel")
