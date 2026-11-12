@@ -2614,6 +2614,11 @@ class Flow:
                     self.m.shot(f"store-row-took-{press}-presses")
                     print(f"::warning::the store's {STORE_RESULT} row opened only on press {press}", flush=True)
                 return btn
+            # The pointer is still on the row, and a drawn pointer hides the title's
+            # letters (run 43152014422: the row lit, nothing opened, the list was
+            # "gone" to the reading and no second press was made). Hands off first.
+            self.m.move(1150, 300)
+            time.sleep(1)
             again, _ = self.wait_store_result(STORE_RESULT, 1, every=0)
             if not again:
                 self.log(f"no list to read after press {press}; waiting for the page, no more presses")
