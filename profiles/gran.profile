@@ -1,0 +1,8 @@
+inherit="desktop"
+profile_id="gran"
+profile_name="AurOS for Gran"
+profile_description="Big and simple, with two games."
+os_codename="Quarry"
+theme="moss"
+shell_archetype="rail"
+packages_apps="gnome-mahjongg gnome-sudoku"
