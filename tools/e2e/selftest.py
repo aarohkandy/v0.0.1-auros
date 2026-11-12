@@ -1347,8 +1347,13 @@ def test_profile_flow_dry():
                 return lambda *a, **k: calls.append(name)
 
         saved = (e2e.Flow, e2e.PROFILE, e2e.INSTALLER_NAME, os.environ.get("E2E_STORE"))
+        # The base journey, whatever lane of a real run this selftest is a step of: in the
+        # bitlocker lane E2E_VARIANT and E2E_BITLOCKER_PUTBACK are set for the whole job
+        # (build run 43117835353 died here with "generic put-back has no exact ... commit").
+        lane = (e2e.VARIANT, e2e.BITLOCKER_PUTBACK)
         try:
             e2e.Flow, e2e.PROFILE, e2e.INSTALLER_NAME = FakeFlow, profile, installer
+            e2e.VARIANT, e2e.BITLOCKER_PUTBACK = "base", False
             if store_env is None:
                 os.environ.pop("E2E_STORE", None)
             else:
@@ -1360,6 +1365,7 @@ def test_profile_flow_dry():
                 plan_file = os.path.exists(f"{a.out}/profile-journey.txt")
         finally:
             e2e.Flow, e2e.PROFILE, e2e.INSTALLER_NAME = saved[:3]
+            e2e.VARIANT, e2e.BITLOCKER_PUTBACK = lane
             if saved[3] is None:
                 os.environ.pop("E2E_STORE", None)
             else:
