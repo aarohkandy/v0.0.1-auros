@@ -71,14 +71,23 @@ class Archive:
 
 
 class Down:
-    """A server that is there and answers 503 to everything, counting how often it is asked."""
-    def __init__(self):
+    """A server that is there and answers 503 to everything, counting how often it is asked.
+    With `slow`, it has every file of `slow` (an Archive) and takes its time to begin."""
+    def __init__(self, slow=None, wait=0.3):
         self.asked = 0
         outer = self
         class H(http.server.BaseHTTPRequestHandler):
             def log_message(self, *a): pass
             def do_GET(self):
                 outer.asked += 1
+                if slow is not None:
+                    import time
+                    time.sleep(wait)
+                    b = slow.files.get(self.path.replace("%3A", ":"))
+                    if b is None:
+                        self.send_response(404); self.end_headers(); return
+                    self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers()
+                    self.wfile.write(b); return
                 self.send_response(503); self.send_header("Content-Length", "0"); self.end_headers()
             do_HEAD = do_GET
         class Quiet(http.server.ThreadingHTTPServer):
@@ -266,6 +275,16 @@ def main():
         check(rc == 0, "a release is made from the second server when the first is down")
         check(0 < down.asked <= 5 * 4 + 90, "...and the server that is down is asked once a file after "
               "five failures, not four times (%d askings for 90 files)" % down.asked)
+
+        # ...and one that answers, slowly, goes to the back as well: the prompt one is asked first.
+        slow = Down(slow=many)
+        env_slow = dict(ENV, SOURCES_SLOW="0.2")
+        p = subprocess.run([sys.executable, "-I", TOOL, "make", "--root", mroot, "--out", os.path.join(tmp, "relslow"),
+                            "--tag", "v9", "--jobs", "1", "--base", "lp:" + slow.url, "--base", "lp:" + many.url,
+                            "--no-online"], capture_output=True, text=True, env=env_slow, cwd=ROOT)
+        check(p.returncode == 0 and 0 < slow.asked <= 12,
+              "a server that takes long to begin answering is left for the prompt one after five files "
+              "(%d askings for 90 files)" % slow.asked)
 
         # ── the good release ──────────────────────────────────────
         out = os.path.join(tmp, "rel")
