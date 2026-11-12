@@ -20,18 +20,37 @@
 #            a step that fails the job: profileinstalltest, profiletest boot,
 #            profilechoicestest, nosticktest (baked profile). Nothing is
 #            published from here: this job cannot write to the repository.
-#   publish  the ONLY job with contents: write. A PRERELEASE named
-#            os-<profile>-<7 of the commit> with exactly make-os's files and plain
-#            notes. See "WHY THIS CANNOT TOUCH THE PUBLIC RELEASE" below.
+#            It also hands over this image's own package database (the list of
+#            what the image holds), for the next job.
+#   sources  the SOURCE CODE of what this image holds, as the prerelease
+#            sources-os-<profile>-<7 of the commit>: sources.yml, called with the
+#            profile, makes it from the database above, publishes it and downloads
+#            every file again to check it (docs/legal/SOURCES.md). A profile's own
+#            programs (packages_apps, packages_extra) are in it because the list is
+#            this image's, not the desktop's. It runs BEFORE publish on purpose: the
+#            GPL wants the source offered with the binary, so no installer is ever
+#            published without it. If it cannot be made, nothing is published.
+#   publish  the job that makes the installer's release (with sources and windows,
+#            the only ones with contents: write). A PRERELEASE named
+#            os-<profile>-<7 of the commit> with make-os's files, NOTICES.txt from the
+#            source release, and plain notes. Waits for sources. See "WHY THIS CANNOT
+#            TOUCH THE PUBLIC RELEASE" below.
 #   windows  e2e.yml (real Windows 11 in a VM) on the published installer, with
 #            the profile, so what it expects and which steps it skips come from
-#            the profile. Skipped when the dispatch says windows=false.
+#            the profile. Skipped when the dispatch says windows=false, and when
+#            there is no published installer (so also when the source release
+#            could not be made: hours of Windows are not spent on a file that
+#            cannot be sent).
 #   summary  what to paste to the person: the address, the SHA-256, what was proved.
+#            "Nothing was published" and "do not send" whenever sources or publish
+#            did not succeed.
 #
 # WHY THIS CANNOT TOUCH THE PUBLIC RELEASE
 #   - the tag starts with os- ; every place that looks for an AurOS release asks
-#     for v<version>-<sha7> (windows.yml, sources.yml, parity.yml, customize.yml,
-#     cloud/src/builds.js), apt, e2e-, profiles-... and none matches os-.
+#     for v<version>-<sha7> (windows.yml, sources.yml's sweep, parity.yml,
+#     customize.yml, cloud/src/builds.js), apt, e2e-, profiles-... and none
+#     matches os-. (sources.yml is also CALLED from here, with the profile, and
+#     then makes only sources-os-<profile>-<7>: it edits no AurOS release.)
 #   - it is made with --prerelease and this file never says --latest, never
 #     edits a release and never reads releases/latest (tools/workflowlint.py
 #     rule 13 fails the lint if it ever does). Only a full release moves
@@ -59,7 +78,8 @@ on:
   push:
     branches: ['makeos/**']
 
-# contents: write belongs to the one job that publishes (SEC-005).
+# contents: write belongs to the jobs that publish (SEC-005): publish, sources (its
+# own sources-os-... release) and windows (e2e.yml's evidence).
 permissions:
   contents: read
   actions: read
@@ -247,6 +267,15 @@ jobs:
           cp "out/manifests/$PROFILE.json" ev/manifest.json
           { echo "### build-warnings of $PROFILE"; echo '```'; cat ev/build-warnings; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
+      # What the sources job makes the source release from: THIS image's package
+      # database (tools/legal/osmeta.sh), taken now because proof 4 takes a package
+      # out of this tree. Under its own artifact name, never auros-rootfs.
+      - name: what the source release is made from (this image's package database)
+        run: |
+          sudo sh tools/legal/osmeta.sh "work/forge/$PROFILE" out/auros-staging.img srcin
+          sudo chown -R "$(id -u):$(id -g)" srcin
+          ls -la srcin
+
       # The files publish will upload: exactly make-os's, and the numbers the
       # release notes and the summary quote.
       - name: what was made
@@ -289,6 +318,16 @@ jobs:
         run: |
           sudo env PATH="$PATH" sh tools/profiletest.sh boot "$PROFILE" "$PWD/ev" 2>&1 | tee ev/profiletest-boot.txt
 
+      # The database above was read from the build tree; proof 2 has just read the
+      # image's own disk. The number of installed packages must be the same, or the
+      # source offer would be computed from something that is not this image.
+      - name: the package database handed to the source release is the image's own (count read off its disk by proof 2)
+        run: |
+          want=$(cat srcin/packages.count)
+          got=$(sed -n 's/^packages=//p' "ev/$PROFILE-image.txt" | head -1)
+          echo "build tree: $want installed packages; read off the image's disk: ${got:-nothing}"
+          [ -n "$got" ] && [ "$want" = "$got" ] || { echo "::error::the package database for the source release ($want) is not the image's ($got)"; exit 1; }
+
       # The choices.conf THIS installer writes (the look card, the profile's theme),
       # put where the installer puts it, applied by this image's first boot.
       - name: proof 3 - what the installer writes, applied by the real image (profilechoicestest)
@@ -304,6 +343,15 @@ jobs:
         run: |
           sudo env PATH="$PATH" NOSTICK_PROFILE=baked RFS="work/forge/$PROFILE/rootfs" \
               sh tools/nosticktest.sh 2>&1 | tee ev/nosticktest.txt
+
+      # Only after every proof passed: the sources job runs when this job does.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: os-${{ needs.check.outputs.profile }}-source-inputs
+          path: srcin/
+          retention-days: 14
+          compression-level: 0
+          if-no-files-found: error
 
       - name: the proofs' evidence
         if: ${{ !cancelled() }}
@@ -328,8 +376,27 @@ jobs:
           retention-days: 30
           if-no-files-found: ignore
 
-  publish:
+  # THE SOURCE CODE, before the installer is published (see the header). sources.yml
+  # makes sources-<tag> from the artifact above, publishes it as a prerelease (a draft
+  # until complete), downloads every file again and runs build/sources verify against
+  # the image's own package list. About 1.5 hours (docs/legal/SOURCES.md). It runs
+  # only if build passed, and publish runs only if it passed: no `if:` anywhere, so
+  # a failure here is a failed run with nothing published.
+  sources:
     needs: [check, build]
+    uses: ./.github/workflows/sources.yml
+    permissions:
+      contents: write
+      actions: read
+    with:
+      run-id: ${{ github.run_id }}
+      tag: ${{ needs.check.outputs.tag }}
+      profile: ${{ needs.check.outputs.profile }}
+      rootfs-artifact: os-${{ needs.check.outputs.profile }}-source-inputs
+      installer-artifact: os-${{ needs.check.outputs.profile }}-source-inputs
+
+  publish:
+    needs: [check, build, sources]
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
@@ -376,6 +443,28 @@ jobs:
             || { echo "::error::the installer does not carry $want_base"; exit 1; }
           echo "ok: $(ls -1 | wc -l) files, all as built"
 
+      # The notes below point to the release sources-<tag>. The sources job made it and
+      # checked it; here it is read again from its public address, because the notes
+      # must not promise a release this run only believes in: published (not a draft),
+      # a prerelease, built from this commit, naming this tag, and NOTICES.txt is in it
+      # with the hash it lists. That NOTICES.txt goes into this release too.
+      - name: the source release exists, is published, and is this build's
+        run: |
+          st="sources-$TAG"
+          [ "$(gh release view "$st" --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"')" = "false true" ] \
+            || { echo "::error::$st is not a published prerelease"; exit 1; }
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$st"
+          mkdir -p src
+          for f in SHA256SUMS SOURCES.txt PACKAGES.txt NOTICES.txt; do curl -fsSL --retry 5 -o "src/$f" "$base/$f"; done
+          ( cd src && grep ' NOTICES.txt$' SHA256SUMS | sha256sum -c - ) || { echo "::error::NOTICES.txt of $st is not the one its SHA256SUMS lists"; exit 1; }
+          sed -n 1p src/PACKAGES.txt | grep -qF "AurOS $TAG," \
+            || { echo "::error::PACKAGES.txt of $st does not name $TAG"; exit 1; }
+          sed -n 2p src/SOURCES.txt | grep -q "^# commit $GITHUB_SHA" \
+            || { echo "::error::SOURCES.txt of $st was not made from commit $GITHUB_SHA"; exit 1; }
+          grep -q '^S[[:space:]]' src/SOURCES.txt || { echo "::error::SOURCES.txt of $st lists no source package"; exit 1; }
+          cp src/NOTICES.txt rel/NOTICES.txt
+          echo "ok: $st is published, made from $GITHUB_SHA; NOTICES.txt copied into this release"
+
       - name: the notes, in plain words
         env:
           IMAGE_SHA256: ${{ needs.build.outputs.image_sha256 }}
@@ -385,6 +474,9 @@ jobs:
           DOWNLOAD_BYTES: ${{ needs.build.outputs.download_bytes }}
           WINDOWS: ${{ needs.check.outputs.windows }}
         run: |
+          # the one sentence every AurOS release carries about its source (tools/legal/notes.sh)
+          line=$(sh tools/legal/notes.sh line "$TAG")
+          export SOURCE_LINE="$line"
           python3 - <<'PY'
           import os, sys
           sys.path.insert(0, "tools/customize")
@@ -423,13 +515,16 @@ jobs:
           - `profiletest boot`: the real image, started in QEMU with KVM under UEFI, reached its own desktop; what is in it (programs, policy, browser) was read off the disk.
           - `profilechoicestest`: the look and theme this installer writes are the ones this image shows after its first start.
           - `nosticktest` with this installer's profile: a whole install over a Windows disk with no memory stick, Windows' files unchanged, and Put Windows back.
+          - The source code: the release `sources-{E('TAG')}`, made from this image's own list of programs and published before this release, then every file downloaded again and every program of the image shown to have its source (`build/sources verify`).
           - The Windows install journey: {windows}
 
           **Not tested:** a real computer. No real computer has run AurOS yet; everything above ran in virtual machines.
 
           **Updates.** Ubuntu's security and bug fixes install by themselves, in the background, as on every AurOS. AurOS's own parts (the desktop, the start-up code, the way back to Windows) do **not** update on a custom build: AurOS's update channel is switched off in every image that is not the public desktop one. A newer AurOS means a new installer.
 
-          **Source code.** AurOS's own code is this repository at the commit above. The public releases each have a sibling `sources-` release with the Ubuntu source packages; custom builds do not get one.
+          **Source code.** {E('SOURCE_LINE')}
+
+          That sibling release, [`sources-{E('TAG')}`](https://github.com/{repo}/releases/tag/sources-{E('TAG')}), was made from the list of programs in *this* image, so the programs this profile adds are covered, not only the desktop's. It holds the Ubuntu source packages in the exact versions installed, a copy of the source of Firefox as Mozilla publishes it, and AurOS's own code at the commit above. `NOTICES.txt`, attached to this release too, holds the licence texts and the written offer. The offer's words (also in the installed system, in `/usr/share/doc/auros/SOURCE-OFFER`) are this: the source release is named `sources-` followed by the name of the AurOS release, and this release's name is `{E('TAG')}`.
           """
           open("notes.md", "w").write(notes)
           PY
@@ -501,7 +596,7 @@ jobs:
       profile: ${{ needs.check.outputs.profile }}
 
   summary:
-    needs: [check, build, publish, windows]
+    needs: [check, build, sources, publish, windows]
     if: ${{ always() && needs.check.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -515,6 +610,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SETUP_SHA256: ${{ needs.build.outputs.setup_sha256 }}
           R_BUILD: ${{ needs.build.result }}
+          R_SOURCES: ${{ needs.sources.result }}
           R_PUBLISH: ${{ needs.publish.result }}
           R_WINDOWS: ${{ needs.windows.result }}
           WINDOWS_ASKED: ${{ needs.check.outputs.windows }}
@@ -524,11 +620,13 @@ jobs:
           {
             echo "## AurOS for \`$PROFILE\`, commit \`${COMMIT:0:7}\`"
             echo
-            if [ "$R_PUBLISH" != success ]; then
-              echo "**Nothing was published.** Build: $R_BUILD. Publish: $R_PUBLISH. Nothing below is ready to send. What failed is in [the run]($RUN_URL)."
+            if [ "$R_PUBLISH" != success ] || [ "$R_SOURCES" != success ]; then
+              echo "**Nothing was published.** Build: $R_BUILD. Source code: $R_SOURCES. Publish: $R_PUBLISH. Nothing below is ready to send. What failed is in [the run]($RUN_URL)."
+              [ "$R_BUILD" != success ] || [ "$R_SOURCES" = success ] || echo "**The source code of this image could not be made or checked, so the installer was not published: an installer is never sent without the source of the programs in it.** If it was a network failure, try Re-run failed jobs on the run (the build's files are kept for 14 days); for anything else push a new commit."
               exit 0
             fi
             echo "Installer: $url"
+            echo "Source code: https://github.com/$REPO/releases/tag/sources-$TAG (published before the installer, and checked)"
             echo "SHA-256: \`$SETUP_SHA256\`"
             echo
             echo "**Proved in this run, on the exact files published** (the build job passes only if every one passed):"
@@ -537,6 +635,7 @@ jobs:
             echo "- the real image starts up to its own desktop under UEFI and KVM (profiletest boot)"
             echo "- the look and theme the installer writes are the ones the image shows (profilechoicestest)"
             echo "- a whole install and the way back, with no memory stick (nosticktest)"
+            echo "- the source code of every program in this image is published as \`sources-$TAG\` and checked: each file downloaded again, every program shown to have its source (build/sources verify)"
             case "$R_WINDOWS" in
               success) echo "- a real Windows 11 virtual machine: the website, the download, the warnings, the installer, the restart, AurOS. The steps that do not apply to this profile were skipped by a stated rule: see the e2e run's summary" ;;
               failure|cancelled) echo "- **the Windows journey did not pass** ($R_WINDOWS): see [the run]($RUN_URL). Do not send this yet." ;;
