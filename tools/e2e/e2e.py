@@ -2943,9 +2943,15 @@ class Flow:
                 home = os.path.join(mnt, installed_home(mnt) or "missing-home")
                 docs = os.path.join(home, "Documents")
                 dest = os.path.join(docs, fixture["name"])
-                if os.path.islink(home) or os.path.islink(docs) or os.path.lexists(dest):
+                # Her home is hers alone (0750): this user cannot look inside it, so the
+                # questions are asked as root. Asked plainly, "is there a Documents?" was
+                # always no, and mkdir failed on the folder a new home now starts with
+                # (build run 43155300809).
+                def there(flag, path):
+                    return run(["sudo", "test", flag, path], self.rec, check=False).returncode == 0
+                if there("-L", home) or there("-L", docs) or there("-e", dest) or there("-L", dest):
                     raise Failure("refusing an unexpected Documents link or existing fixture path")
-                if not os.path.isdir(docs):
+                if not there("-d", docs):
                     # Her Documents folder, as the file manager would make it.
                     run(["sudo", "mkdir", "--", docs], self.rec)
                     run(["sudo", "chown", "--reference=" + home, "--", docs], self.rec)
