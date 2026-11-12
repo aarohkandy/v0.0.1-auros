@@ -112,10 +112,10 @@ def make_out(d, extra=None, files=None):
     open(os.path.join(d, "SHA256SUMS"), "w").write("".join("%s  %s\n" % (sha(b), n) for n, b in sorted(files.items())))
 
 
-def run(db, out, notes, *args, env=None):
+def run(db, out, notes, *args, env=None, tag="sources-v1"):
     e = dict(os.environ, GH=os.path.join(db, "gh"), FAKE_DB=db, GITHUB_REPOSITORY="o/r", PUBLISH_SLEEP="0", DEFAULT_BRANCH="main")
     e.update(env or {})
-    p = subprocess.run([sys.executable, "-I", TOOL, "sources-v1", out, notes] + list(args), capture_output=True, text=True, env=e)
+    p = subprocess.run([sys.executable, "-I", TOOL, tag, out, notes] + list(args), capture_output=True, text=True, env=e)
     return p.returncode, p.stdout + p.stderr
 
 
@@ -214,6 +214,20 @@ def main():
         rc, o = subprocess.run([sys.executable, "-I", TOOL, "evil name", out1, notes], capture_output=True, text=True,
                                env=dict(os.environ, GITHUB_REPOSITORY="o/r", GH=os.path.join(db, "gh"), FAKE_DB=db)).returncode, ""
         check(rc != 0, "an odd release name is refused")
+
+        # a custom OS (make-os.yml): its sources release is sources-os-<profile>-<7 hex>, published like any other
+        db6 = os.path.join(tmp, "db6"); os.makedirs(db6); shutil.copy(os.path.join(db, "gh"), db6); os.chmod(os.path.join(db6, "gh"), 0o755)
+        rc, o = run(db6, out1, notes, tag="sources-os-office-0123abc")
+        r = state(db6)[0] if os.path.exists(db6 + "/state.json") else {}
+        check(rc == 0 and r.get("tag_name") == "sources-os-office-0123abc" and not r.get("draft") and len(r.get("assets", [])) == 6,
+              "a custom OS's sources release (sources-os-<profile>-<sha7>) is made and published (%s)" % o.strip()[-50:])
+        for bad in ("sources-os-office-0123ab", "sources-os-office-0123abcd", "sources-os-office-0123ABC", "sources-os--0123abc",
+                    "sources-os-Office-0123abc", "sources-os-../x-0123abc", "sources-os-a b-0123abc", "sources-os-office", "sources-office-0123abc",
+                    "sources-os-" + "a" * 33 + "-0123abc"):
+            d = os.path.join(tmp, "dbx"); shutil.rmtree(d, ignore_errors=True); os.makedirs(d)
+            shutil.copy(os.path.join(db, "gh"), d); os.chmod(os.path.join(d, "gh"), 0o755)
+            rc, o = run(d, out1, notes, tag=bad)
+            check(rc != 0 and "odd release name" in o and not os.path.exists(d + "/state.json"), "the release name %r is refused before anything is made" % bad)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("\n%s" % ("all passed" if not FAILED else "%d FAILED: %s" % (len(FAILED), "; ".join(FAILED))))
@@ -221,6 +235,8 @@ def main():
 
 
 MUTANTS = [
+    ("a custom OS name may end in anything", "-[0-9a-f]{7})\", tag)", "-.*)\", tag)"),
+    ("a custom OS name is not accepted", "|os-[a-z0-9]", "|xx-[a-z0-9]"),
     ("the new set is swapped in without checking the digests", "if wrong:", "if False:"),
     ("an upload goes up over the old name (the old part is deleted first)", "os.path.join(stage, \"new-\" + n), clobber=False)", "os.path.join(outdir, n), clobber=True)"),
     ("a set with fewer sources is accepted", "if lost:", "if False:"),

@@ -24,7 +24,11 @@
 #      bit-for-bit reproducible), and an installer from one build must never
 #      fetch pieces from another. So a release or a tag of that name already
 #      existing stops the run NOW, with the command that clears it, instead of
-#      after the build.
+#      after the build. The same for the release sources-<tag>, which the run
+#      makes before the installer's release: it is the source of THAT build's
+#      packages (a new build may hold newer ones), it is never deleted
+#      (docs/OWNER-SETUP.md), and sources.yml only verifies one that exists. A
+#      commit that has one needs a new commit.
 #
 #  ENVIRONMENT  EVENT (push | workflow_dispatch)  REF_NAME  PROFILE_IN
 #               WINDOWS_IN (true|false)  SHA (40 hex)  REPO (owner/name)
@@ -68,6 +72,13 @@ check() {
         *"release not found"*) ;;
         *) fail "could not tell whether the release $tag exists: $err" ;;
     esac
+    if err=$(gh release view "sources-$tag" -R "$REPO" 2>&1 >/dev/null); then
+        fail "the release sources-$tag already exists (the source code of an earlier build of this commit; a source release is never deleted). A new build may hold other package versions, so it must not be mixed into that one. Push a new commit and run again. If only the publishing failed in a run that is still there, try Re-run failed jobs on that run instead."
+    fi
+    case "$err" in
+        *"release not found"*) ;;
+        *) fail "could not tell whether the release sources-$tag exists: $err" ;;
+    esac
     if err=$(gh api "repos/$REPO/git/ref/tags/$tag" 2>&1 >/dev/null); then
         fail "the tag $tag already exists without a release. Delete it, then run again: git push https://github.com/$REPO.git :refs/tags/$tag"
     fi
@@ -86,11 +97,13 @@ check() {
 selftest() {
     t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
     mkdir "$t/bin"
-    # A gh that answers from $FAKE_RELEASE (exists | none | error) and $FAKE_TAG.
+    # A gh that answers from $FAKE_RELEASE and $FAKE_SOURCES (the releases os-... and
+    # sources-os-...; exists | none | error) and $FAKE_TAG.
     cat > "$t/bin/gh" <<'GH'
 #!/bin/sh
 case "$1" in
-    release) case "$FAKE_RELEASE" in
+    release) case "$3" in sources-*) r=$FAKE_SOURCES ;; *) r=$FAKE_RELEASE ;; esac
+             case "$r" in
                  exists) echo '{}'; exit 0 ;;
                  none)   echo 'release not found' >&2; exit 1 ;;
                  *)      echo 'HTTP 502: Bad Gateway' >&2; exit 1 ;;
@@ -106,6 +119,8 @@ GH
     chmod +x "$t/bin/gh"
     bad=0; sha=0123456789abcdef0123456789abcdef01234567
     # case NAME WANT(0|1) EVENT REF PROFILE WINDOWS RELEASE TAG [EXPECTED-OUTPUT-LINE]
+    # (FAKE_SOURCES, the state of sources-<tag>, is "none" unless the case sets it)
+    FAKE_SOURCES=none; export FAKE_SOURCES
     run() {
         name=$1; want=$2; ev=$3; ref=$4; pin=$5; win=$6; fr=$7; ft=$8; line=${9:-}
         EVENT=$ev REF_NAME=$ref PROFILE_IN=$pin WINDOWS_IN=$win SHA=$sha REPO=o/r FAKE_RELEASE=$fr FAKE_TAG=$ft \
@@ -137,6 +152,11 @@ GH
     run "a tag with that name already exists: refused"     1 workflow_dispatch main office "" none exists
     run "an API error on the release: refused (fails closed)" 1 workflow_dispatch main office "" error none
     run "an API error on the tag: refused (fails closed)"  1 workflow_dispatch main office "" none error
+    FAKE_SOURCES=exists
+    run "a source release of that name exists: refused"    1 workflow_dispatch main office "" none none
+    FAKE_SOURCES=error
+    run "an API error on the source release: refused (fails closed)" 1 workflow_dispatch main office "" none none
+    FAKE_SOURCES=none
     # the message says what to run
     EVENT=workflow_dispatch PROFILE_IN=office SHA=$sha REPO=o/r FAKE_RELEASE=exists FAKE_TAG=none GITHUB_OUTPUT=$t/o \
         PATH=$t/bin:$PATH sh "$0" check > "$t/log" 2>&1

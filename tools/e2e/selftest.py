@@ -25,7 +25,7 @@
 
 Run from anywhere: python3 tools/e2e/selftest.py
 """
-import ast, contextlib, inspect, io, json, os, re, shutil, subprocess, sys, tempfile
+import ast, contextlib, glob, inspect, io, json, os, re, shutil, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "..", "..", "src", "aurbridge")
@@ -1494,6 +1494,106 @@ def test_store_result():
           "store result: an ambiguous early right border fails closed")
 
 
+def test_store_in_every_look():
+    """The store step was written on the Like Windows look (a light desktop, a
+    dark window line). Big and simple on moss is the other way round: a dark
+    desktop and a light line. Real screenshots of run 43142725058 (gran)."""
+    try:
+        import e2e, vision, numpy as np
+    except ImportError:
+        return
+    A = e2e.AurFlow
+    # a dark desktop, a light window line (synthetic)
+    img = np.zeros((800, 1280, 3), np.uint8); img[:] = (22, 26, 22)
+    img[:, 192] = 200                                 # the shell's home panel border
+    check(A.store_frame(img) is None, "store, dark look: only the shell's panel border: no frame")
+    img[75:715, 243:245] = 238
+    check(A.store_frame(img) == 243, "store, dark look: the window's light left line is found, not the desktop at x=200")
+    check(A.store_magnifier(img, None) == (290, 103), "store, dark look: the search button is where it was on the light look")
+    # a dark desktop with nothing but wallpaper noise
+    noise = np.random.RandomState(1).randint(0, 40, (800, 1280, 3)).astype(np.uint8)
+    check(A.store_frame(noise) is None, "store, dark look: wallpaper alone is no window")
+
+    fx = lambda n: vision.load(os.path.join(HERE, "fixtures", n))
+    results = fx("store-results-vlc-rail-moss-43142725058.png")
+    home = fx("store-home-rail-moss-43142725058.png")
+    check(A.store_frame(results) == 243 and A.store_frame(home) == 243,
+          "store, Big and simple on moss: the real window's frame is at x=243")
+    check(A.store_magnifier(home, None) == (290, 103),
+          "store, Big and simple on moss: the real search button (outline 263..316) is pressed at its centre")
+    region = A.store_results_region(results)
+    check(region is not None and region[0] > 243 and 170 < region[1] < 200 and
+          region[0] + region[2] <= 1034 and region[1] + region[3] <= 716,
+          f"store, Big and simple on moss: the results body is derived below the search field {region}")
+    check(A.store_results_region(home) is None,
+          "store, Big and simple on moss: the front page has no search field, so no body to click in")
+    check(A.store_has_content(results), "store, Big and simple on moss: the results window has content")
+    # the button on an app's page is the theme's accent: every theme's, not the two
+    # the harness was written on
+    for theme in sorted(glob.glob(os.path.join(HERE, "..", "..", "themes", "*.theme"))):
+        m = re.search(r'^accent="#([0-9A-Fa-f]{6})"', open(theme).read(), re.M)
+        rgb = tuple(int(m.group(1)[i:i + 2], 16) for i in (0, 2, 4))
+        check(rgb in e2e.STORE_ACCENTS,
+              f"store button: {os.path.basename(theme)}'s accent {m.group(1)} is one the store's button is looked for in")
+    page = fx("store-vlc-page-rail-moss.png")
+    shown = object.__new__(A).store_button(page)
+    check(shown is not None and 870 < shown[0][0] < 900 and 170 < shown[0][1] < 190,
+          f"store, Big and simple on moss: the real Install button (moss green) is found on VLC's page {shown}")
+    # the light look's real screenshots still give what they gave
+    check(A.store_frame(fx("store-results-vlc-base-40148012698.png")) == 237,
+          "store, Like Windows: the real window's frame is where it was")
+
+    if shutil.which("tesseract"):
+        found = A.store_result(vision.ocr(results, region), "VLC")
+        check(found is not None and found[1] > region[1],
+              f"store, Big and simple on moss: the VLC title is read in the results body {found}")
+        check(shown is not None and shown[1] == "Install",
+              f"store, Big and simple on moss: and it reads Install, not 'f Install }}' ({shown[1]!r})")
+        opened = object.__new__(A).store_open_button(fx("store-vlc-installed-rail-moss.png"))
+        check(opened is not None and opened[0] == "Open",
+              f"store, Big and simple on moss: the installed page's Open is one exact, readable control {opened}")
+        proven_by = lambda words: A.program_window_proven(words, 800, "VLC", e2e.STORE_APP_CONTROLS.split("|"))
+        vlc = fx("program-open-vlc-rail-moss.png")
+        check(proven_by(vision.ocr(vlc)) is None,
+              "store, Big and simple on moss: whole-screen OCR alone drops VLC's title and menu (why the strip is read too)")
+        check(proven_by(A.ocr_with_title_band(vlc)) is not None,
+              "store, Big and simple on moss: the real VLC window is proven open by its title and menu")
+        step = A.program_privacy_step(A.ocr_with_title_band(fx("program-privacy-vlc-rail-moss.png")), 800, "VLC")
+        check(step[0] is not None and step[1] is not None,
+              "store, Big and simple on moss: VLC's first-launch privacy dialog is attributed and has its one Continue")
+        starting = fx("store-starting-rail-moss-43142725058.png")
+        check(not A.store_ready(starting), "store, Big and simple on moss: 'Starting...' is not ready")
+        check(A.store_ready(home), "store, Big and simple on moss: the front page is ready")
+        check(vision.find_text(vision.ocr(fx("shell-home-panel-rail-moss-43142725058.png")), e2e.STORE_HOME),
+              "store, Big and simple on moss: the shell's Home panel is told from the store by its heading")
+        check(not vision.find_text(vision.ocr(home), e2e.STORE_HOME),
+              "store, Big and simple on moss: the store's own page is not mistaken for it")
+    else:
+        check(True, "store, Big and simple on moss: real screenshot OCR waits for the runner's tesseract dependency")
+
+
+def test_ocr_with_title_band():
+    """The strip reading fills in what the whole-screen reading dropped and never
+    repeats a word it has (a phrase twice would read as two windows)."""
+    try:
+        import e2e, numpy as np
+    except ImportError:
+        return
+    w = lambda t, x, y, line: {"text": t, "x": x, "y": y, "w": 40, "h": 15, "line": line}
+    whole = [w("Privacy", 294, 90, (1, 1, 1))]
+    strip = [w("Privacy", 296, 91, (3, 1, 1)), w("VLC", 600, 92, (3, 1, 1))]
+    old = e2e.vision.ocr
+    try:
+        e2e.vision.ocr = lambda img, region=None, **k: list(whole) if region is None else [dict(x) for x in strip]
+        got = e2e.AurFlow.ocr_with_title_band(np.zeros((800, 1280, 3), np.uint8))
+    finally:
+        e2e.vision.ocr = old
+    check([x["text"] for x in got] == ["Privacy", "VLC"],
+          "launch: a word the whole screen read is not added again from the title strip")
+    check(got[1]["line"] == ("strip", 3, 1, 1),
+          "launch: a word only the strip read is kept, on a line of its own")
+
+
 def test_store_result_pressed_again():
     """A press on a result that comes to nothing is pressed again, but never
     once the list has gone: that press would land on the program's page."""
@@ -1575,7 +1675,8 @@ def test_store_open_click_boundary():
     labels = {box: "Open", (700, 200, 120, 44): "Open"}
     try:
         e2e.vision.find_buttons = lambda img, region, rgb: img.get(rgb, [])
-        e2e.vision.ocr = lambda img, found, psm=7: found
+        # the label is read inside the button (button_label's inset): give the box back
+        e2e.vision.ocr = lambda img, r, psm=7: (r[0] - 10, r[1] - 4, r[2] + 20, r[3] + 8)
         e2e.vision.text_of = lambda found: labels[found]
         finder = object.__new__(e2e.AurFlow)
         check(finder.store_open_button({e2e.STORE_ACCENTS[0]: [box]}) == ("Open", box),
@@ -2189,6 +2290,8 @@ test_generic_default_verdicts()
 test_profile_journey()
 test_profile_flow_dry()
 test_store_frame()
+test_store_in_every_look()
+test_ocr_with_title_band()
 test_store_content()
 test_store_result()
 test_store_result_pressed_again()

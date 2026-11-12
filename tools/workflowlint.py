@@ -48,8 +48,12 @@
     the public release: no --latest, make_latest, --prerelease=false,
     releases/latest, `gh release edit` or call of release.yml; every
     `gh release create` says --prerelease; only the jobs that publish
-    (publish, and windows, which calls e2e.yml) have contents: write; and no
-    script has ${{ }} in it (the profile is text a person typed: env only).
+    (publish; sources, which calls sources.yml for the release sources-os-...;
+    and windows, which calls e2e.yml) have contents: write; and no script has
+    ${{ }} in it (the profile is text a person typed: env only). The installer is
+    never published without its source code: `sources` calls sources.yml with a
+    profile, `publish` waits for it (needs, no `if:`), and nothing in the file
+    says continue-on-error.
 """
 import glob, os, re, sys
 
@@ -131,10 +135,23 @@ def lint_make_os(path, doc, code):
     for cmd in re.findall(r"gh\s+release\s+create(?:\\\n|[^\n])*", code):
         if "--prerelease" not in cmd:
             out.append("%s: make-os.yml has a `gh release create` without --prerelease" % path)
+    if re.search(r"continue-on-error", code):
+        out.append("%s: make-os.yml says continue-on-error: a failure must stop the installer from being published" % path)
+    jobs = doc["jobs"]
+    pub, src = jobs.get("publish") or {}, jobs.get("sources")
+    need = pub.get("needs") or []
+    need = [need] if isinstance(need, str) else need
+    if not isinstance(src, dict) or src.get("uses") != "./.github/workflows/sources.yml" \
+            or not (src.get("with") or {}).get("profile"):
+        out.append("%s: make-os.yml has no `sources` job calling sources.yml with a profile: no installer without its source code" % path)
+    elif src.get("if") is not None:
+        out.append("%s: make-os.yml's sources job has an if:" % path)
+    if "sources" not in need or pub.get("if") is not None:
+        out.append("%s: make-os.yml's publish must need sources and have no if: (an installer is never published without its source code)" % path)
     for name, job in doc["jobs"].items():
         perms = job.get("permissions")
-        if isinstance(perms, dict) and perms.get("contents") == "write" and name not in ("publish", "windows"):
-            out.append("%s: make-os.yml job %s has contents: write: only publish (and windows, e2e.yml's evidence) may" % (path, name))
+        if isinstance(perms, dict) and perms.get("contents") == "write" and name not in ("publish", "windows", "sources"):
+            out.append("%s: make-os.yml job %s has contents: write: only publish, sources (sources.yml's own release) and windows (e2e.yml's evidence) may" % (path, name))
         for st in job.get("steps") or []:
             if isinstance(st, dict) and "${{" in str(st.get("run", "")):
                 out.append("%s: make-os.yml job %s has ${{ }} inside a script: the profile is typed text, pass it through env" % (path, name))
@@ -200,7 +217,9 @@ def selftest():
         ("explicit installer token handoff passes",
          "jobs:\n  sign:\n    uses: ./.github/workflows/sign-installer.yml\n    secrets:\n      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}\n", 0),
     ]
-    mk = ("jobs:\n  publish:\n    timeout-minutes: 5\n    permissions:\n      contents: write\n    steps:\n"
+    mk = ("jobs:\n  sources:\n    needs: [build]\n    uses: ./.github/workflows/sources.yml\n    permissions:\n      contents: write\n"
+          "    with:\n      profile: x\n"
+          "  publish:\n    needs: [build, sources]\n    timeout-minutes: 5\n    permissions:\n      contents: write\n    steps:\n"
           "      - run: gh release create \"$TAG\" --prerelease --target main rel/*\n")
     cases += [
         ("make-os: a prerelease-only publish passes", mk, 0),
@@ -212,6 +231,13 @@ def selftest():
         ("make-os: contents: write on the build job is refused", mk + "  build:\n    timeout-minutes: 5\n    permissions:\n      contents: write\n    steps:\n      - run: x\n", 1),
         ("make-os: an input inside a script is refused", mk + "      - run: echo ${{ inputs.profile }}\n", 1),
         ("make-os: an input through env passes", mk + "      - env:\n          P: ${{ inputs.profile }}\n        run: echo \"$P\"\n", 0),
+        ("make-os: publish that does not wait for sources is refused", mk.replace("needs: [build, sources]", "needs: [build]"), 1),
+        ("make-os: publish with an if: (always() and the like) is refused", mk.replace("    needs: [build, sources]\n", "    needs: [build, sources]\n    if: ${{ always() }}\n"), 1),
+        ("make-os: no sources job at all is refused", mk.replace("uses: ./.github/workflows/sources.yml", "uses: ./.github/workflows/e2e.yml"), 1),
+        ("make-os: a sources job without a profile is refused", mk.replace("    with:\n      profile: x\n", ""), 1),
+        ("make-os: a sources job with an if: is refused", mk.replace("    needs: [build]\n", "    needs: [build]\n    if: ${{ always() }}\n"), 1),
+        ("make-os: continue-on-error is refused", mk + "      - continue-on-error: true\n        run: x\n", 1),
+        ("make-os: contents: write on the sources job passes", mk, 0),
     ]
     bad = 0
     for what, text, want in cases:

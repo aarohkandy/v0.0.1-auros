@@ -64,7 +64,8 @@ Add `-f windows=false` to skip the Windows journey (the last, longest step).
 Watch it with `gh run watch -R aarohkandy/v0.0.1-auros`. If the name is wrong,
 or the release already exists, it stops in seconds and says what to do. A rerun
 of the same commit needs the old release removed first; the message gives the
-command. On a Linux machine instead: `sudo build/make-os gran --base-url
+command. (The source release is never removed: a new run for the same commit
+needs a new commit. If only the last step failed, Re-run failed jobs on the run.) On a Linux machine instead: `sudo build/make-os gran --base-url
 https://github.com/OWNER/REPO/releases/download/TAG/`, then upload the files in
 `out/os/gran/` to that release yourself (`docs/HANDOFF-RUNBOOK.md`).
 
@@ -74,7 +75,9 @@ It builds the image and the installer, then on that exact image: the installer
 installs this profile and no other; the image starts to its own desktop under
 UEFI; the look and colours the installer writes are the ones it shows; a whole
 install and the way back work over a pretend Windows disk with no memory stick.
-Then, on a real Windows 11 in a virtual machine: the website, the download,
+Before anything is published it also makes the source code of every program in
+that image (about 1.5 hours; section 4). Then, on a real Windows 11 in a virtual
+machine: the website, the download,
 Windows' warnings, the installer, the restart, AurOS starting. Steps that cannot
 apply (a kiosk has no store) are skipped by a stated rule, and the summary lists
 each as ran or SKIPPED with the reason.
@@ -84,9 +87,14 @@ yet. The installer is not signed, so Windows warns before it starts it.
 
 ## 4. Where it appears, and what to send
 
-The run publishes a prerelease on the repository's releases page named
-`os-gran-<first 7 of the commit>`. It is not the public download and nothing on
-the website links to it. The run's summary page ends with text to paste to her:
+The run publishes two prereleases on the repository's releases page: first
+`sources-os-gran-<first 7 of the commit>`, the source code of every program in
+her image (the licenses of Linux, Firefox and the rest require it, and the offer
+inside the OS says it is named that way), then `os-gran-<same 7>`, the installer.
+The installer is published only after the source release is complete and checked,
+so if the source cannot be made the run fails, publishes nothing, and says so.
+`os-gran-...` is not the public download and nothing on the website links to it.
+Never delete a `sources-` release. The run's summary names both. The run's summary page ends with text to paste to her:
 the address
 
 `https://github.com/aarohkandy/v0.0.1-auros/releases/download/os-gran-1234567/AurOS-Setup-gran.exe`
@@ -95,7 +103,9 @@ and the file's SHA-256. She checks it in PowerShell with
 `Get-FileHash $HOME\Downloads\AurOS-Setup-gran.exe`; the code must match. Tell her
 about the two Windows warnings (Edge: Keep, then Keep anyway; the blue panel:
 More info, then Run anyway). Never send her the "Latest" link: that is the
-desktop.
+desktop. Send the installer only from a run whose summary says it is ready and
+names the `sources-os-...` release. An `os-` release made before this existed has
+no source release (its notes say so): do not send it.
 
 ## 5. Try it without a computer
 

@@ -24,6 +24,7 @@ on:
       - 'src/aurshell/welcome.c'
       - '.github/workflows/legal.yml'
       - '.github/workflows/sources.yml'
+      - '.github/workflows/make-os.yml'
 
 permissions:
   contents: read
@@ -48,6 +49,13 @@ jobs:
           python3 -I tools/legal/publishtest.py
           python3 -I tools/legal/publishtest.py --mutants
           python3 -I tools/legal/stagingcheck.py selftest
+      # sources.yml's and make-os.yml's own steps, run against a fake gh: which source release a
+      # call may ask for, that the desktop's path is as it was, that a custom OS touches no AurOS
+      # release, and that an installer is not published without its source.
+      - name: the source offer of a custom OS (the workflows' own steps, run)
+        run: |
+          sh tools/apt.sh python3-yaml zstd
+          python3 -I tools/legal/sourcesflowtest.py
       - name: the legal texts keep their promises
         run: |
           python3 -I tools/legal/check.py selftest

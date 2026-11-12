@@ -184,7 +184,8 @@ def main(argv):
     if len(argv) < 3 or not REPO:
         print(__doc__); return 2
     tag, outdir, notes = argv[:3]
-    if not re.fullmatch(r"sources-v[0-9][0-9A-Za-z.+-]*", tag):
+    # sources-v<version>-<sha7> for the desktop; sources-os-<profile>-<sha7> for a custom OS (make-os.yml)
+    if not re.fullmatch(r"sources-(v[0-9][0-9A-Za-z.+-]*|os-[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?-[0-9a-f]{7})", tag):
         raise SystemExit("publish: odd release name %r" % tag)
     if "--again" in argv:
         publish_again(tag, outdir, notes)
