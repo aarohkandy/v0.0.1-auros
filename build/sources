@@ -288,11 +288,35 @@ def candidate_urls(bases, src, ver, name):
     return out
 
 
+# A SERVER THAT IS DOWN IS ASKED LAST, AND ONCE. On 2026-11-12 Launchpad answered 503 after
+# twenty seconds for hours. Every file asked it four times before going on to the pool, and two
+# releases ran into their 150 minutes with the pool answering in a third of a second all along.
+# After SICK_AFTER failures in a row a server is "resting": the others go first, and it gets one
+# try, not four. It is still asked (a superseded version is only on Launchpad), and one answer,
+# even "404", ends the rest. Which server a file came from never mattered: every file is checked
+# against its .dsc, and the .dsc against what the image asked for.
+SICK_AFTER = 5
+_failures, _failures_lock = {}, threading.Lock()
+
+
+def _server(url):
+    return urllib.parse.urlsplit(url).netloc
+
+
+def _answered(url, ok):
+    with _failures_lock:
+        _failures[_server(url)] = 0 if ok else _failures.get(_server(url), 0) + 1
+
+
+def _resting(url):
+    return _failures.get(_server(url), 0) >= SICK_AFTER
+
+
 def get_file(bases, src, ver, name, dest, want=None):
     """First base that has it; streams to dest, returns (size, sha256).
     A file that does not hash to `want` is an error, not a miss."""
     miss = []
-    for url in candidate_urls(bases, src, ver, name):
+    for url in sorted(candidate_urls(bases, src, ver, name), key=_resting):   # stable: resting last
         def once(url=url):
             h, n = hashlib.sha256(), 0
             # one name per thread: two versions of one source share their orig tarball's name,
@@ -312,10 +336,14 @@ def get_file(bases, src, ver, name, dest, want=None):
             os.replace(part, dest)
             return n, h.hexdigest()
         try:
-            return retrying(once, url)
+            got = retrying(once, url, tries=1 if _resting(url) else 4)
+            _answered(url, True)
+            return got
         except urllib.error.HTTPError as e:
+            _answered(url, True)                            # it answered: "not here" is an answer
             miss.append("%s -> %s" % (url, e.code))
         except Fail as e:
+            _answered(url, False)
             miss.append("%s -> %s" % (url, str(e)[:400]))   # a base that keeps failing: the next one may have it
     raise Fail("not found (%s)" % "; ".join(miss))
 
