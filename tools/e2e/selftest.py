@@ -1594,6 +1594,57 @@ def test_ocr_with_title_band():
           "launch: a word only the strip read is kept, on a line of its own")
 
 
+def test_store_result_under_the_pointer():
+    """Run 43152014422 (gran): the first press on VLC's row lit it and opened
+    nothing; the drawn pointer then sat on the title, the reading found no list,
+    and the harness made no second press and waited five minutes for a page that
+    was never coming. Real screenshots; the hand must leave the row first."""
+    try:
+        import e2e, vision
+    except ImportError:
+        return
+    if not shutil.which("tesseract"):
+        check(True, "store result under the pointer: real screenshot OCR waits for the runner's tesseract dependency")
+        return
+    fx = lambda n: vision.load(os.path.join(HERE, "fixtures", n))
+    covered, clear = fx("store-results-vlc-pointer-on-row-43152014422.png"), fx("store-results-vlc-pointer-off-rail-moss.png")
+    A = e2e.AurFlow
+    read = lambda img: A.store_result(vision.ocr(img, A.store_results_region(img)), "VLC")
+    check(read(covered) is None, "store result under the pointer: the title is hidden by a pointer on it, as it was in the run")
+    check(read(clear) is not None, "store result under the pointer: with the hand away the row is read")
+
+    class Hands:
+        def __init__(self):
+            self.hand, self.clicks = "on", []
+
+        def alive(self):
+            return True
+
+        def screendump(self):
+            return covered if self.hand == "on" else clear
+
+        def click(self, x, y, label=None, **how):
+            self.clicks.append((x, y)); self.hand = "on"
+
+        def move(self, x, y):
+            self.hand = "away"
+
+        def shot(self, label):
+            pass
+    f = object.__new__(A)
+    f.m, f.log = Hands(), lambda *_: None
+    buttons = iter([None, (724, 188, 117, 38)])
+    f.store_install_button = lambda timeout: next(buttons)
+    old_sleep, e2e.time.sleep = e2e.time.sleep, lambda s: None
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            got = f.open_store_result((445, 241, 28, 10))
+    finally:
+        e2e.time.sleep = old_sleep
+    check(got is not None and len(f.m.clicks) == 2,
+          "store result under the pointer: a first press that only lit the row is pressed again")
+
+
 def test_store_result_pressed_again():
     """A press on a result that comes to nothing is pressed again, but never
     once the list has gone: that press would land on the program's page."""
@@ -1612,6 +1663,9 @@ def test_store_result_pressed_again():
         def shot(self, label):
             self.shots.append(label)
 
+        def move(self, x, y):
+            self.moves = getattr(self, "moves", []) + [(x, y)]
+
     def run(buttons, rows):
         """buttons: what each watch sees; rows: is the list there after each."""
         f = object.__new__(e2e.AurFlow)
@@ -1626,19 +1680,22 @@ def test_store_result_pressed_again():
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             got = f.open_store_result(ROW, wait=100)
-        said.update(shots=f.m.shots, printed=out.getvalue())
+        said.update(shots=f.m.shots, printed=out.getvalue(), moves=getattr(f.m, "moves", []))
         return got, f.m.clicks, waits
 
     said = {}
     ROW, MOVED, BTN = (380, 250, 16, 16), (380, 400, 16, 16), (724, 188, 117, 38)
-    old_centre = e2e.vision.centre
+    old_centre, old_sleep = e2e.vision.centre, e2e.time.sleep
     e2e.vision.centre = lambda box: (box[0] + 8, box[1] + 8)
+    e2e.time.sleep = lambda s: None
     try:
         got, clicks, waits = run([BTN], [])
         check(got == BTN and len(clicks) == 1 and not clicks[0][2],
               "store result: a press that takes is pressed once, plainly")
         check(not said["shots"] and not said["printed"], "store result: and nothing is said about it")
         got, clicks, waits = run([None, BTN], [ROW])
+        check(said["moves"][:1] == [(1150, 300)],
+              "store result: after a press that came to nothing the hand leaves the row before the list is read (a pointer hides the title)")
         check(got == BTN and len(clicks) == 2 and clicks[1][2].get("jiggle"),
               "store result: a press that came to nothing is pressed again, by a slower hand")
         check("again" in clicks[1][1], "store result: the log says it took a second press")
@@ -1658,7 +1715,7 @@ def test_store_result_pressed_again():
         check(got is None and len(clicks) == 2 and sum(waits) == 300,
               "store result: the same on the second press")
     finally:
-        e2e.vision.centre = old_centre
+        e2e.vision.centre, e2e.time.sleep = old_centre, old_sleep
 
 
 def test_store_open_click_boundary():
@@ -2291,6 +2348,7 @@ test_profile_journey()
 test_profile_flow_dry()
 test_store_frame()
 test_store_in_every_look()
+test_store_result_under_the_pointer()
 test_ocr_with_title_band()
 test_store_content()
 test_store_result()
