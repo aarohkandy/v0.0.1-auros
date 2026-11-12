@@ -29,7 +29,18 @@
 #     `again` after the run id a PUBLISHED sources release is made again
 #     with a fixed tool and its assets are replaced by the complete set;
 #     assets of the old set that are not in the new one are removed;
-#   - release.yml calling it.
+#   - release.yml calling it;
+#   - make-os.yml calling it (a custom OS, docs/MAKE-AN-OS.md) with `profile`: the same
+#     work for a release named os-<profile>-<7 of the commit>, below.
+#
+# A CUSTOM OS (make-os.yml). Its programs are its profile's, so the source offer is
+# computed from THIS image's own dpkg database, which make-os's build job hands over
+# (inputs rootfs-artifact and installer-artifact: its own artifact names, never
+# auros-rootfs and auros-installer, which stagekvm.yml and tests.yml pick by name from
+# the newest run). It is called BEFORE the installer's release is published: the
+# release the called run makes is `sources-os-<profile>-<7>` and nothing is done to the
+# AurOS release (it does not exist yet; make-os's publish job attaches NOTICES.txt to
+# it and writes its notes). The sweep never looks at os- releases.
 #
 #   which     decides without a runner whether this run has work and which
 #             releases are to be made (the matrix).
@@ -59,6 +70,21 @@ on:
       tag:
         type: string
         required: true
+      # make-os.yml: the profile of a custom OS. Empty (release.yml, the sweep, a commit
+      # subject) is every behaviour above, unchanged. With a profile, `tag` must be
+      # os-<profile>-<7 hex> and the three below name the build's own artifacts.
+      profile:
+        type: string
+        required: false
+        default: ''
+      rootfs-artifact:
+        type: string
+        required: false
+        default: auros-rootfs
+      installer-artifact:
+        type: string
+        required: false
+        default: auros-installer
 
 permissions:
   contents: read
@@ -87,6 +113,7 @@ jobs:
         env:
           IN_RUN: ${{ inputs.run-id }}
           IN_TAG: ${{ inputs.tag }}
+          IN_PROFILE: ${{ inputs.profile }}
           EVENT: ${{ github.event_name }}
           MSG: ${{ github.event.head_commit.message }}
         run: |
@@ -115,8 +142,13 @@ jobs:
           if [ "$EVENT" = schedule ]; then
             sweep
           elif [ -n "$IN_RUN" ]; then
-            # called by release.yml: its own tag and run, but still only plain characters
-            [[ $IN_TAG =~ ^v[0-9][0-9A-Za-z.+-]*$ && $IN_RUN =~ ^[0-9]+$ ]] || { echo "::error::odd tag or run id"; exit 1; }
+            if [ -n "$IN_PROFILE" ]; then
+              # called by make-os.yml: a custom OS, its tag is os-<profile>-<7 of the commit>
+              [[ $IN_PROFILE =~ ^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$ && $IN_TAG =~ ^os-$IN_PROFILE-[0-9a-f]{7}$ && $IN_RUN =~ ^[0-9]+$ ]] || { echo "::error::odd profile, tag or run id"; exit 1; }
+            else
+              # called by release.yml: its own tag and run, but still only plain characters
+              [[ $IN_TAG =~ ^v[0-9][0-9A-Za-z.+-]*$ && $IN_RUN =~ ^[0-9]+$ ]] || { echo "::error::odd tag or run id"; exit 1; }
+            fi
             todo=$(printf '[{"tag":"%s","run":"%s","again":"false"}]' "$IN_TAG" "$IN_RUN")
           else
             # the SUBJECT must START with the words: a commit that merely quotes them (a revert, a doc) does nothing
@@ -157,6 +189,8 @@ jobs:
       TAG: ${{ matrix.item.tag }}
       RID: ${{ matrix.item.run }}
       AGAIN: ${{ matrix.item.again }}
+      PROFILE: ${{ inputs.profile }}
+      INSTALLER_ARTIFACT: ${{ inputs.installer-artifact || 'auros-installer' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -164,7 +198,11 @@ jobs:
 
       - name: which commit the release was built from, and that the tag is its tag
         run: |
-          case "$TAG" in v[0-9]*) ;; *) echo "::error::odd tag"; exit 1 ;; esac
+          if [ -n "$PROFILE" ]; then
+            case "$TAG" in "os-$PROFILE-"*) ;; *) echo "::error::odd tag"; exit 1 ;; esac
+          else
+            case "$TAG" in v[0-9]*) ;; *) echo "::error::odd tag"; exit 1 ;; esac
+          fi
           case "$TAG$RID" in *[!0-9A-Za-z.+-]*) echo "::error::odd tag or run id"; exit 1 ;; esac
           COMMIT=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RID" --jq .head_sha)
           [ -n "$COMMIT" ] || { echo "::error::run $RID not found"; exit 1; }
@@ -193,15 +231,20 @@ jobs:
       - name: the AurOS release itself says where its source is and carries the license texts (added, nothing replaced)
         run: |
           # GPLv3 6(d): directions next to the object code. Done before the heavy work, so it never waits on it.
-          body=$(gh release view "$TAG" --json body --jq .body)
-          case "$body" in
-            *"complete source code for this release"*) echo "the notes of $TAG already point to the source" ;;
-            *) { printf '%s\n\n' "$body"; sh tools/legal/notes.sh line "$TAG"; } | gh release edit "$TAG" --notes-file - >/dev/null
-               echo "the notes of $TAG now point to the source" ;;
-          esac
+          # (A custom OS has no release yet: make-os.yml's publish job writes its notes and attaches NOTICES.txt.)
+          if [ -z "$PROFILE" ]; then
+            body=$(gh release view "$TAG" --json body --jq .body)
+            case "$body" in
+              *"complete source code for this release"*) echo "the notes of $TAG already point to the source" ;;
+              *) { printf '%s\n\n' "$body"; sh tools/legal/notes.sh line "$TAG"; } | gh release edit "$TAG" --notes-file - >/dev/null
+                 echo "the notes of $TAG now point to the source" ;;
+            esac
+          fi
           mkdir -p out-inc
           sed "s|@AUROS_RELEASES@|$(sh tools/repo.sh releases)|g" docs/legal/notices/NOTICES.txt > out-inc/NOTICES.txt
-          if gh release view "$TAG" --json assets --jq '.assets[].name' | grep -qx NOTICES.txt; then
+          if [ -n "$PROFILE" ]; then
+            echo "a custom OS: no release $TAG yet, its NOTICES.txt is the one in sources-$TAG"
+          elif gh release view "$TAG" --json assets --jq '.assets[].name' | grep -qx NOTICES.txt; then
             echo "$TAG already has NOTICES.txt"
           else
             gh release upload "$TAG" out-inc/NOTICES.txt
@@ -211,7 +254,7 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: env.EXISTS == 'false'
         with:
-          name: auros-rootfs
+          name: ${{ inputs.rootfs-artifact || 'auros-rootfs' }}
           path: dist
           run-id: ${{ matrix.item.run }}
           github-token: ${{ github.token }}
@@ -241,7 +284,7 @@ jobs:
           # (host-sources.txt in the installer artifact: stream E's hand-off) that is used; where it
           # did not, this runner's is, and SOURCES.txt says so.
           mkdir -p hostinfo
-          gh run download "$RID" -R "$GITHUB_REPOSITORY" -n auros-installer -D hostinfo || { echo "::error::cannot download the installer artifact of run $RID"; exit 1; }
+          gh run download "$RID" -R "$GITHUB_REPOSITORY" -n "$INSTALLER_ARTIFACT" -D hostinfo || { echo "::error::cannot download the installer artifact of run $RID"; exit 1; }
           if [ -s hostinfo/host-sources.txt ]; then
             cp hostinfo/host-sources.txt host.txt
             echo "HOST_NOTE=The build host's glibc source is the one the build recorded (host-sources.txt)." >> "$GITHUB_ENV"
@@ -317,6 +360,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       RID: ${{ matrix.item.run }}
+      INSTALLER_ARTIFACT: ${{ inputs.installer-artifact || 'auros-installer' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -331,7 +375,7 @@ jobs:
       - name: every Ubuntu program inside the installer's small system is in its NOTICES
         run: |
           [ -d meta/var/lib/dpkg/info ] || { echo "no dpkg file lists for this release; nothing to check"; exit 0; }
-          gh run download "$RID" -R "$GITHUB_REPOSITORY" -n auros-installer -D inst
+          gh run download "$RID" -R "$GITHUB_REPOSITORY" -n "$INSTALLER_ARTIFACT" -D inst
           python3 -I tools/legal/stagingcheck.py --cpio inst/auros-staging.img --info meta/var/lib/dpkg/info
 
   reverify:
