@@ -25,6 +25,7 @@ environment variables below; tools/e2e/README.md has the rest.
 """
 import argparse
 import datetime
+import glob
 import hashlib
 import math
 import numpy as np
@@ -84,12 +85,20 @@ CONTRAST_MIN = 4.5                                    # docs/EASY.md: text on a 
 STORE_NAME = E("STORE_NAME", "Get more programs")    # the app list's name for it
 STORE_QUERY = E("STORE_QUERY", "VLC")                 # typed into its search
 STORE_RESULT = E("STORE_RESULT", "VLC")               # the result to open
+STORE_HOME = "What would you like to do"               # the heading of the shell's Home panel
 STORE_INSTALL = E("STORE_INSTALL", "Install")         # the button that installs
 STORE_OPEN = E("STORE_OPEN", "Open|Launch|Press here to open")  # appears when installed
 STORE_APP_CONTROLS = E("STORE_APP_CONTROLS", "Media|Playback|Audio|Video|Subtitle|Tools|View|Help")
-# the accents the store's main button can be: AurOS's gold (legacy theme), its
-# green (#0B5D4F light, #5DBB9E dark), the old teal
-STORE_ACCENTS = ((200, 155, 74), (0x0B, 0x5D, 0x4F), (0x5D, 0xBB, 0x9E), (0x7D, 0xD3, 0xC0))
+# the accents the store's main button can be: the old gold and teal, and the
+# accent of every theme a look can wear (themes/*.theme: sandstone's #0B5D4F,
+# nocturne's #5DBB9E, moss's #8FBF7F, ...). A fixed list went stale with each
+# theme a profile could pick (moss, run 43142725058).
+STORE_ACCENTS_LEGACY = ((200, 155, 74), (0x0B, 0x5D, 0x4F), (0x5D, 0xBB, 0x9E), (0x7D, 0xD3, 0xC0))
+STORE_ACCENTS = STORE_ACCENTS_LEGACY + tuple(sorted({
+    tuple(int(m.group(1)[i:i + 2], 16) for i in (0, 2, 4))
+    for f in glob.glob(os.path.join(REPO, "themes", "*.theme"))
+    for m in re.finditer(r'^accent="#([0-9A-Fa-f]{6})"', open(f).read(), re.M)}
+    - set(STORE_ACCENTS_LEGACY)))
 APP_FILES = E("APP_FILES", "usr/bin/vlc var/lib/flatpak/app/org.videolan.VLC")
 
 # ── which PC (tools/e2e/README.md, "Variants") ──────────────────────
@@ -1961,10 +1970,17 @@ class Flow:
             deadline = time.time() + 300
             while time.time() < deadline and not p:
                 img = self.m.screendump()
+                words = None
                 if self.store_frame(img):
-                    p = "its window frame"
-                    break
-                words = vision.ocr(img)
+                    # the shell's own Home panel (Big and simple) is framed the same
+                    # way: a frame is the store's only when that panel is not what
+                    # is on screen
+                    words = vision.ocr(img)
+                    if not vision.find_text(words, STORE_HOME):
+                        p = "its window frame"
+                        break
+                if words is None:
+                    words = vision.ocr(img)
                 for w in ("Search", "Explore", "Installed", "Updates", "Software", "Instal"):
                     if vision.find_text(words, w):
                         p = w
@@ -1979,9 +1995,9 @@ class Flow:
             # opened is not the same as showing something: its window drew its header
             # and an empty body for five minutes on a real install (run 40043978048)
             deadline = time.time() + 300
-            while time.time() < deadline and not self.store_has_content(self.m.screendump()):
+            while time.time() < deadline and not self.store_ready(self.m.screendump()):
                 time.sleep(10)
-            if not self.store_has_content(self.m.screendump()):
+            if not self.store_ready(self.m.screendump()):
                 self.m.shot("store-empty")
                 raise Failure("the store OPENED but its catalogue stayed EMPTY for 5 minutes (header bar and tabs "
                               "drawn, nothing under them): " + vision.text_of(vision.ocr(self.m.screendump()))[:300])
@@ -2104,7 +2120,7 @@ class Flow:
             while time.time() < deadline:
                 time.sleep(5)
                 img = self.m.screendump()
-                words = vision.ocr(img)
+                words = self.ocr_with_title_band(img)
                 error = self.program_launch_error(words)
                 if error:
                     self.m.save(img, "program-launch-failed")
@@ -2152,7 +2168,7 @@ class Flow:
                         self.m.click(*vision.centre(box), label=f"show the mapped {STORE_RESULT} window")
                         time.sleep(3)
                         img = self.m.screendump()
-                        words = vision.ocr(img)
+                        words = self.ocr_with_title_band(img)
                         error = self.program_launch_error(words)
                         if error:
                             self.m.save(img, "program-launch-failed")
@@ -2375,8 +2391,7 @@ class Flow:
         run 40051742550: so the frame is found by pixels, on the row of the tabs
         when OCR gave it, else y=103 (the header's middle at 100 and at 107).)"""
         cy = vision.centre(explore_box)[1] if explore_box else 103
-        lum = img[300].astype(int).sum(axis=1) // 3       # a row through the window's body
-        frame = next((x for x in range(200, 400) if lum[x] < 110), None)
+        frame = AurFlow.store_frame(img)
         return (frame + 47, cy) if frame else None
 
     @staticmethod
@@ -2433,6 +2448,11 @@ class Flow:
         if left is None:
             return None
         lum = img.astype(np.int16).sum(axis=2) // 3
+        # the window's own line, in the colour it is drawn in: dark on a light
+        # look, light on a dark one
+        if np.median(lum[150:500, left]) >= 128:
+            lum = 255 - lum
+        ink = lum < 110
 
         def runs(values):
             out = []
@@ -2444,14 +2464,14 @@ class Flow:
                     out[-1][1] = value
             return out
 
-        vertical = runs(np.flatnonzero(lum[:, left] < 110))
+        vertical = runs(np.flatnonzero(ink[:, left]))
         vertical = [span for span in vertical if span[1] - span[0] >= 200]
         if len(vertical) != 1:
             return None
         top, bottom = vertical[0]
         height = bottom - top + 1
         right_cols = np.flatnonzero(
-            (lum[top:bottom + 1, left + 200:] < 110).mean(axis=0) > 0.9)
+            ink[top:bottom + 1, left + 200:].mean(axis=0) > 0.9)
         if not len(right_cols):
             return None
         right = left + 200 + int(right_cols[0])
@@ -2459,7 +2479,7 @@ class Flow:
             return None
 
         strong_rows = np.flatnonzero(
-            (lum[top:bottom + 1, left:right + 1] < 110).mean(axis=1) > 0.6) + top
+            ink[top:bottom + 1, left:right + 1].mean(axis=1) > 0.5) + top
         header_rows = [span for span in runs(strong_rows)
                        if span[1] < top + height // 2]
         if len(header_rows) < 2:
@@ -2471,12 +2491,15 @@ class Flow:
 
     @staticmethod
     def store_frame(img):
-        """The x of the store window's left frame line (a dark vertical line down
-        most of the rows 150..500 between x=200 and 400), or None: the shell's
-        own panel border at x=192 is not in that range."""
-        lum = img[150:500, 200:400].astype(int).sum(axis=2) // 3
-        dark = (lum < 110).mean(axis=0)
-        cols = np.nonzero(dark > 0.9)[0]
+        """The x of the store window's left frame line, or None: the first column
+        in x 200..400 that, down most of the rows 150..500, differs sharply from
+        the column four pixels to its left. That holds whatever the look: a dark
+        line on a light desktop (Like Windows) and a light line on a dark one
+        (Big and simple on moss, where the desktop itself is darker than any
+        threshold). The shell's own panel border at x=192 is not in that range."""
+        lum = img[150:500, 196:400].astype(int).sum(axis=2) // 3
+        edge = (np.abs(lum[:, 4:] - lum[:, :-4]) > 120).mean(axis=0)
+        cols = np.nonzero(edge > 0.9)[0]
         return int(cols[0]) + 200 if len(cols) else None
 
     @staticmethod
@@ -2491,6 +2514,34 @@ class Flow:
         vals, counts = np.unique(reg, axis=0, return_counts=True)
         return 1.0 - counts.max() / len(reg) > 0.03
 
+    @staticmethod
+    def ocr_with_title_band(img):
+        """Whole-screen OCR, plus a strip across the top where a window's title and
+        menu are. On a dark look the whole-screen reading drops a window's title and
+        menu bar (VLC's, in Big and simple on moss), which is all the program-open
+        proof is made of; the strip reads them. Strip words are added only where the
+        whole-screen reading has no word, so no phrase is ever there twice."""
+        words = vision.ocr(img)
+        for w in vision.ocr(img, (0, 60, img.shape[1], 110)):
+            cx, cy = vision.centre((w["x"], w["y"], w["w"], w["h"]))
+            if any(o["x"] <= cx < o["x"] + o["w"] and o["y"] <= cy < o["y"] + o["h"] for o in words):
+                continue
+            words.append(dict(w, line=("strip",) + tuple(w.get("line") or ())))
+        return words
+
+    @staticmethod
+    def button_label(img, box):
+        """What a button says, read inside its rounded corners: the dark ground
+        showing at a corner is read as a letter ('f Open }' on moss's light green)."""
+        x, y, w, h = box
+        return vision.text_of(vision.ocr(img, (x + 10, y + 4, w - 20, h - 8), psm=7)).strip()
+
+    @staticmethod
+    def store_ready(img):
+        """Showing something, and not its own "Starting..." page (a click on its
+        header's search button before that lands on nothing)."""
+        return AurFlow.store_has_content(img) and not vision.find_text(vision.ocr(img), "Starting")
+
     def store_button(self, img):
         """The store's main button on an app's page: (box, what it says), or
         None. It is a solid block of the theme's accent in the page's header
@@ -2498,7 +2549,7 @@ class Flow:
         button's few letters are read far better alone than among a screen."""
         for rgb in STORE_ACCENTS:
             for b in vision.find_buttons(img, (240, 100, 800, 330), rgb)[:1]:
-                return b, vision.text_of(vision.ocr(img, b, psm=7)).strip()     # '' if unreadable
+                return b, self.button_label(img, b)     # '' if unreadable
         return None
 
     def store_open_button(self, img):
@@ -2513,7 +2564,7 @@ class Flow:
         found = []
         for rgb in STORE_ACCENTS:
             for box in vision.find_buttons(img, (240, 100, 800, 330), rgb):
-                raw = vision.text_of(vision.ocr(img, box, psm=7)).strip()
+                raw = self.button_label(img, box)
                 canonical = wanted.get(re.sub(r"[^a-z0-9]", "", raw.lower()))
                 if canonical and box not in [item[1] for item in found]:
                     found.append((canonical, box))
