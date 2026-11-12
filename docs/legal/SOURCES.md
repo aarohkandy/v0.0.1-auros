@@ -34,6 +34,41 @@ The release notes carry the written offer (`rootfs/usr/share/doc/auros/SOURCE-OF
 also in the image, on the website's Licenses page and, in a short form, in the
 notes of the AurOS release itself).
 
+## A custom OS (`make-os.yml`, `docs/MAKE-AN-OS.md`)
+
+An AurOS made from a profile can carry programs the desktop does not (`packages_apps`,
+`packages_extra`), so the desktop's `sources-v...` release does not cover it. `make-os.yml`
+calls this same workflow with the profile: `sources.yml` then makes `sources-os-<profile>-<sha7>`
+for the release `os-<profile>-<sha7>`, with the same tool and the same checks, from **that image's
+own dpkg database** (the build job takes it from the tree the image was copied from, right after
+the build, and `tools/legal/osmeta.sh` writes it in the shapes `sources.yml` reads; the count of
+installed packages is compared with the count the boot proof reads off the image's own disk).
+Differences from the desktop, and only these:
+
+- It runs **before** the installer's release is published, and `publish` waits for it: no
+  installer is published without its source. The AurOS release does not exist yet, so the
+  notes-pointer and `NOTICES.txt` steps are skipped here; `publish` copies the `NOTICES.txt` of the
+  source release (after reading the release back and checking it is published, a prerelease, made
+  from this commit and names this tag) into the installer's release and writes the pointer into its
+  notes.
+- The sweep (every three hours, `reverify`) still looks only at `v...` releases for what to make
+  and what is missing; it re-verifies every published `sources-*` release, `sources-os-*` included.
+- Its inputs are artifacts of its own (`os-<profile>-source-inputs`), never `auros-rootfs` or
+  `auros-installer`: `stagekvm.yml` and `tests.yml` pick those by name from the newest run of any
+  workflow.
+- The set is the whole set, every source package of every program in the image. A custom OS could
+  point to the desktop's release for the packages they share and carry only the difference, but
+  nothing here proves two images hold the same version of a package (the build manifest holds
+  hashes, not packages), and the offer's words say the release holds the source "as files you can
+  download". So it is not done.
+- `again` (remaking a published release) and the `[sources TAG RUN-ID]` commit subject accept
+  `v...` tags only. A published `sources-os-*` is never rewritten; a commit that already has one
+  needs a new commit (`tools/makeoscheck.sh` says so before building).
+
+Tests: `tools/legal/sourcesflowtest.py` runs the workflows' own steps against a fake `gh`
+(`legal.yml`); `publishtest.py` knows the name; `workflowlint.py` rule 13 requires `publish` to
+need `sources`.
+
 ## It does not wait for anyone
 
 Every three hours the workflow looks at the AurOS releases (tags that start with `v`)
