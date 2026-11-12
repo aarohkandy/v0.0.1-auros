@@ -286,6 +286,17 @@ def main():
               "a server that takes long to begin answering is left for the prompt one after five files "
               "(%d askings for 90 files)" % slow.asked)
 
+        # A file only the resting server has is still fetched from it (a superseded version).
+        only = Archive(); only.add("old", "0.9-1")
+        opk = mpk + [("old", "0.9-1", None, maint, "install ok installed")]
+        oroot = root_dir(tmp, opk, name="oldroot")
+        slow2 = Down(slow=only)
+        p = subprocess.run([sys.executable, "-I", TOOL, "make", "--root", oroot, "--out", os.path.join(tmp, "relold"),
+                            "--tag", "v9", "--jobs", "1", "--base", "lp:" + slow2.url, "--base", "lp:" + many.url,
+                            "--no-online"], capture_output=True, text=True, env=env_slow, cwd=ROOT)
+        check(p.returncode == 0 and "old 0.9-1" in p.stdout + p.stderr,
+              "a file that only the resting server has is fetched from it all the same")
+
         # ── the good release ──────────────────────────────────────
         out = os.path.join(tmp, "rel")
         rc, o = run("make", "--root", root, "--out", out, "--tag", "v9", "--commit", "c0ffee", "--own-archive", own,
